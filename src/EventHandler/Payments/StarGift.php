@@ -57,7 +57,6 @@ final class StarGift extends IpcCapable implements \JsonSerializable
     {
         $v = get_object_vars($this);
         unset($v['API'], $v['session']);
-        $v['_'] = static::class;
         return $v;
     }
 }
