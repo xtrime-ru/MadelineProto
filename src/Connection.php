@@ -353,7 +353,7 @@ final class Connection
         } elseif ($method === 'messages.sendMessage' &&
             (
                 (isset($arguments['peer']['_']) && \in_array($arguments['peer']['_'], ['inputEncryptedChat', 'updateEncryption', 'updateEncryptedChatTyping', 'updateEncryptedMessagesRead', 'updateNewEncryptedMessage', 'encryptedMessage', 'encryptedMessageService'], true))
-                || (\is_int($arguments['peer']) && DialogId::isSecretChat($arguments['peer']))
+                || (isset($arguments['peer']) && \is_int($arguments['peer']) && DialogId::isSecretChat($arguments['peer']))
             )
         ) {
             $method = 'messages.sendEncrypted';
@@ -370,7 +370,7 @@ final class Connection
                 $arguments['message']['reply_to_random_id'] = $arguments['message']['reply_to']['reply_to_msg_id'];
             }
         } elseif ($method === 'payments.exportInvoice') {
-            if (\is_array($arguments['invoice_media']) && isset($arguments['invoice_media']['_'])) {
+            if (isset($arguments['invoice_media']) && \is_array($arguments['invoice_media']) && isset($arguments['invoice_media']['_'])) {
                 $this->API->processMedia($arguments['invoice_media'], $arguments['cancellation'] ?? null);
                 if ($arguments['invoice_media']['_'] === 'inputMediaUploadedPhoto'
                     && (
@@ -428,17 +428,18 @@ final class Connection
                 $this->API->processMedia($arguments['media'], $arguments['cancellation'] ?? null, true);
             }
         } elseif ($method === 'messages.sendMultiMedia') {
-            foreach ($arguments['multi_media'] as &$singleMedia) {
-                if (\is_string($singleMedia['media'])
-                    || $singleMedia['media']['_'] === 'inputMediaUploadedPhoto'
-                    || $singleMedia['media']['_'] === 'inputMediaUploadedDocument'
-                    || $singleMedia['media']['_'] === 'inputMediaPhotoExternal'
-                    || $singleMedia['media']['_'] === 'inputMediaDocumentExternal'
-                ) {
-                    $singleMedia['media'] = $this->methodCallAsyncRead('messages.uploadMedia', ['peer' => $arguments['peer'], 'media' => $singleMedia['media'], 'cancellation' => $arguments['cancellation'] ?? null]);
+            if (isset($arguments['multi_media'])) {
+                foreach ($arguments['multi_media'] as &$singleMedia) {
+                    if (\is_string($singleMedia['media'])
+                        || $singleMedia['media']['_'] === 'inputMediaUploadedPhoto'
+                        || $singleMedia['media']['_'] === 'inputMediaUploadedDocument'
+                        || $singleMedia['media']['_'] === 'inputMediaPhotoExternal'
+                        || $singleMedia['media']['_'] === 'inputMediaDocumentExternal'
+                    ) {
+                        $singleMedia['media'] = $this->methodCallAsyncRead('messages.uploadMedia', ['peer' => $arguments['peer'], 'media' => $singleMedia['media'], 'cancellation' => $arguments['cancellation'] ?? null]);
+                    }
                 }
             }
-            $this->API->logger($arguments);
         } elseif ($method === 'messages.sendEncryptedFile' || $method === 'messages.uploadEncryptedFile') {
             if (isset($arguments['file'])) {
                 if (

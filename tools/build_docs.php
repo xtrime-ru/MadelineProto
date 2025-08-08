@@ -115,6 +115,9 @@ foreach ($errors['result'] as $code => $sub) {
             $whitelist[$class] = true;
         }
 
+        if (!isset($errors['human_result'][$err])) {
+            continue;
+        }
         $human = $humanOrig = $errors['human_result'][$err];
         $err = var_export($err, true);
         $human = var_export($human, true);

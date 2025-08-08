@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<files psalm-version="dev-master@6f60963fda0ed0211395d72d9c8f4d65ea58dc53">
+<files psalm-version="dev-master@cdceda044f0255e4eb1da0557ff1479e6d317e01">
   <file src="src/API.php">
     <ArgumentTypeCoercion>
       <code><![CDATA[$settings]]></code>
@@ -2364,7 +2364,7 @@
     </MissingParamType>
     <MixedArgument>
       <code><![CDATA[$code]]></code>
-      <code><![CDATA[$errfile ?? '']]></code>
+      <code><![CDATA[$errfileReplaced]]></code>
       <code><![CDATA[$errstr]]></code>
       <code><![CDATA[$errstr]]></code>
       <code><![CDATA[$errstr]]></code>
@@ -2375,17 +2375,13 @@
       <code><![CDATA[$this->file]]></code>
     </MixedArgument>
     <MixedAssignment>
+      <code><![CDATA[$errfileReplaced]]></code>
       <code><![CDATA[$this->file]]></code>
       <code><![CDATA[$this->line]]></code>
     </MixedAssignment>
     <MixedOperand>
       <code><![CDATA[$this->line]]></code>
     </MixedOperand>
-    <PossiblyInvalidArgument>
-      <code><![CDATA[$errfileReplaced]]></code>
-      <code><![CDATA[$errfileReplaced]]></code>
-      <code><![CDATA[$errfileReplaced]]></code>
-    </PossiblyInvalidArgument>
   </file>
   <file src="src/FileCallback.php">
     <TaintedCallable>
@@ -6078,7 +6074,6 @@
       <code><![CDATA[$php[1]]]></code>
     </PossiblyNullArrayAccess>
     <TaintedFile>
-      <code><![CDATA[$this->sessionDirectoryPath]]></code>
       <code><![CDATA[$this->sessionDirectoryPath.DIRECTORY_SEPARATOR.$f]]></code>
     </TaintedFile>
   </file>
@@ -7167,6 +7162,9 @@
       <code><![CDATA[$this->tdDescriptions['methods'][$name]]]></code>
       <code><![CDATA[$this->tdDescriptions['methods'][$name]]]></code>
     </EmptyArrayAccess>
+    <InvalidScalarArgument>
+      <code><![CDATA[$value]]></code>
+    </InvalidScalarArgument>
     <LessSpecificReturnStatement>
       <code><![CDATA[$TL_dict]]></code>
     </LessSpecificReturnStatement>
@@ -7292,7 +7290,6 @@
       <code><![CDATA[$this->constructors->findByPredicate('vector')['id']]]></code>
       <code><![CDATA[$this->constructors->findByPredicate('vector')['id']]]></code>
       <code><![CDATA[$this->constructors->findByPredicate((bool) $object ? 'boolTrue' : 'boolFalse')['id']]]></code>
-      <code><![CDATA[$this->constructors->findByType($type)['predicate']]]></code>
       <code><![CDATA[$this->tdDescriptions['methods'][$name]['params']]]></code>
       <code><![CDATA[$tl['id']]]></code>
       <code><![CDATA[$type]]></code>
@@ -7301,6 +7298,7 @@
       <code><![CDATA[$type['connection']->new_outgoing[$x['req_msg_id']]]]></code>
       <code><![CDATA[$type['type'][0]]]></code>
       <code><![CDATA[$type['type'][0]]]></code>
+      <code><![CDATA[$value['predicate']]]></code>
     </MixedArrayAccess>
     <MixedArrayAssignment>
       <code><![CDATA[$TL_dict['constructors']]]></code>
@@ -7436,6 +7434,7 @@
       <code><![CDATA[$value]]></code>
       <code><![CDATA[$value]]></code>
       <code><![CDATA[$value]]></code>
+      <code><![CDATA[$value]]></code>
       <code><![CDATA[$x]]></code>
       <code><![CDATA[$x]]></code>
       <code><![CDATA[$x]]></code>
@@ -7494,9 +7493,6 @@
      *      methods: list<array{id: numeric-string, method: string, params: list<array{name: string, type: string}>, type: string, layer?: int}>
      * }]]></code>
     </MoreSpecificReturnType>
-    <PossiblyFalseArgument>
-      <code><![CDATA[$value]]></code>
-    </PossiblyFalseArgument>
     <PossiblyInvalidArgument>
       <code><![CDATA[$arguments['cancellation'] ?? null]]></code>
       <code><![CDATA[$arguments['cancellation'] ?? null]]></code>
@@ -7510,9 +7506,6 @@
     <PossiblyInvalidIterator>
       <code><![CDATA[$x['value']]]></code>
     </PossiblyInvalidIterator>
-    <PossiblyNullArgument>
-      <code><![CDATA[$value]]></code>
-    </PossiblyNullArgument>
     <PossiblyNullReference>
       <code><![CDATA[botAPIToMTProto]]></code>
     </PossiblyNullReference>

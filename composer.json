@@ -117,6 +117,7 @@
             "@docs-fix",
             "@cs-fix",
             "@fuzz",
+            "@file_ref_map",
             "@psalm",
             "@test-light"
         ],
@@ -130,6 +131,7 @@
         "psalm": "psalm --no-cache --threads=10",
         "docs": "php tools/build_docs.php",
         "fuzz": "php tools/fuzzer.php",
+        "file_ref_map": "php tools/gen_filerefmap.php",
         "docs-fix": "tools/fix_docs.sh",
         "paratest": "@php -dzend.assertions=1 ./vendor/bin/paratest -fv",
         "paratest-light": "@php -dzend.assertions=1 ./vendor/bin/paratest -fvc phpunit-light.xml",

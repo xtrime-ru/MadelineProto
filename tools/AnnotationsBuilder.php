@@ -390,7 +390,11 @@ final class Blacklist {
             $signature []= "?int \$takeoutId = null";
         }
 
-        if (\in_array($method, ['messages.sendMessage', 'messages.editMessage', 'messages.sendMedia', 'messages.sendMultiMedia', 'messages.setTyping'], true)) {
+        static $business;
+        if (!$business) {
+            $business = json_decode(file_get_contents('https://raw.githubusercontent.com/danog/rpc-db/master/core.json'), true)['business_supported'];
+        }
+        if (\in_array($method, $business, true)) {
             $contents .= "     * @param ?string \$businessConnectionId Business connection ID, received through an updateBotBusinessConnect update.\n";
             $signature []= "?string \$businessConnectionId = null";
         }

@@ -50,6 +50,11 @@ function loadSchemas(): array
     }
     ksort($res);
     file_put_contents(getcwd().'/schemas/list.json', json_encode(array_keys($res)));
+    /*foreach ($res as $layer => $file) {
+        if ($layer > 207) {
+            unset($res[$layer]);
+        }
+    }*/
     return $res;
 }
 

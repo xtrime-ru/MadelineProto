@@ -1205,6 +1205,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#base64urlDecode" name="base64urlDecode">base64URL decode: base64urlDecode</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getBotRecommendations.html" name="bots.getBotRecommendations">bots.getBotRecommendations</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.setCustomVerification.html" name="bots.setCustomVerification">bots.setCustomVerification</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/channels.checkSearchPostsFlood.html" name="channels.checkSearchPostsFlood">channels.checkSearchPostsFlood</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/channels.getMessageAuthor.html" name="channels.getMessageAuthor">channels.getMessageAuthor</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/channels.toggleAutotranslation.html" name="channels.toggleAutotranslation">channels.toggleAutotranslation</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/channels.updatePaidMessagesPrice.html" name="channels.updatePaidMessagesPrice">channels.updatePaidMessagesPrice</a>
@@ -1219,15 +1220,20 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#rleDecode" name="rleDecode">null-byte RLE decode: rleDecode</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#rleEncode" name="rleEncode">null-byte RLE encode: rleEncode</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.canPurchaseStore.html" name="payments.canPurchaseStore">payments.canPurchaseStore</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.createStarGiftCollection.html" name="payments.createStarGiftCollection">payments.createStarGiftCollection</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.deleteStarGiftCollection.html" name="payments.deleteStarGiftCollection">payments.deleteStarGiftCollection</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getResaleStarGifts.html" name="payments.getResaleStarGifts">payments.getResaleStarGifts</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getSavedStarGift.html" name="payments.getSavedStarGift">payments.getSavedStarGift</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getSavedStarGifts.html" name="payments.getSavedStarGifts">payments.getSavedStarGifts</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftCollections.html" name="payments.getStarGiftCollections">payments.getStarGiftCollections</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftUpgradePreview.html" name="payments.getStarGiftUpgradePreview">payments.getStarGiftUpgradePreview</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftWithdrawalUrl.html" name="payments.getStarGiftWithdrawalUrl">payments.getStarGiftWithdrawalUrl</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getUniqueStarGift.html" name="payments.getUniqueStarGift">payments.getUniqueStarGift</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.reorderStarGiftCollections.html" name="payments.reorderStarGiftCollections">payments.reorderStarGiftCollections</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.toggleChatStarGiftNotifications.html" name="payments.toggleChatStarGiftNotifications">payments.toggleChatStarGiftNotifications</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.toggleStarGiftsPinnedToTop.html" name="payments.toggleStarGiftsPinnedToTop">payments.toggleStarGiftsPinnedToTop</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.transferStarGift.html" name="payments.transferStarGift">payments.transferStarGift</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.updateStarGiftCollection.html" name="payments.updateStarGiftCollection">payments.updateStarGiftCollection</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.updateStarGiftPrice.html" name="payments.updateStarGiftPrice">payments.updateStarGiftPrice</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.upgradeStarGift.html" name="payments.upgradeStarGift">payments.upgradeStarGift</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.createConferenceCall.html" name="phone.createConferenceCall">phone.createConferenceCall</a>
@@ -1236,6 +1242,12 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.getGroupCallChainBlocks.html" name="phone.getGroupCallChainBlocks">phone.getGroupCallChainBlocks</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.inviteConferenceCallParticipant.html" name="phone.inviteConferenceCallParticipant">phone.inviteConferenceCallParticipant</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.sendConferenceCallBroadcast.html" name="phone.sendConferenceCallBroadcast">phone.sendConferenceCallBroadcast</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.createAlbum.html" name="stories.createAlbum">stories.createAlbum</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.deleteAlbum.html" name="stories.deleteAlbum">stories.deleteAlbum</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.getAlbumStories.html" name="stories.getAlbumStories">stories.getAlbumStories</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.getAlbums.html" name="stories.getAlbums">stories.getAlbums</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.reorderAlbums.html" name="stories.reorderAlbums">stories.reorderAlbums</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.updateAlbum.html" name="stories.updateAlbum">stories.updateAlbum</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/users.getRequirementsToContact.html" name="users.getRequirementsToContact">users.getRequirementsToContact</a>
 * [Contributing](https://docs.madelineproto.xyz/docs/CONTRIB.html) - You can contribute in various ways.
   * [Translation](https://docs.madelineproto.xyz/docs/CONTRIB.html#translation)

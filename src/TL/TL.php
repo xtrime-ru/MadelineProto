@@ -160,7 +160,7 @@ final class TL implements TLInterface
      */
     public function init(TLSchema $files, array $objects = []): void
     {
-        $this->API?->logger?->logger('Loading TL schemes...', Logger::VERBOSE);
+        //$this->API?->logger?->logger('Loading TL schemes...', Logger::VERBOSE);
         $this->updateCallbacks($objects);
         $this->constructors = new TLConstructors();
         $this->methods = new TLMethods();
@@ -171,7 +171,7 @@ final class TL implements TLInterface
             'secret' => $files->getSecretSchema(),
             ...$files->getOther(),
         ]) as $scheme_type => $file) {
-            $this->API?->logger?->logger(sprintf(Lang::$current_lang['file_parsing'], basename($file)), Logger::VERBOSE);
+            //$this->API?->logger?->logger(sprintf(Lang::$current_lang['file_parsing'], basename($file)), Logger::VERBOSE);
             $filec = file_get_contents(Tools::absolute($file));
             $TL_dict = json_decode($filec, true);
             if ($TL_dict === null) {
@@ -195,14 +195,14 @@ final class TL implements TLInterface
             if (empty($TL_dict) || empty($TL_dict['constructors']) || !isset($TL_dict['methods'])) {
                 throw new Exception(Lang::$current_lang['src_file_invalid'].$file);
             }
-            $this->API?->logger?->logger('Translating objects...', Logger::ULTRA_VERBOSE);
+            //$this->API?->logger?->logger('Translating objects...', Logger::ULTRA_VERBOSE);
             foreach ($TL_dict['constructors'] as $elem) {
                 if ($scheme_type === 'secret') {
                     $this->secretLayer = max($this->secretLayer, $elem['layer']);
                 }
                 $this->constructors->add($elem, $scheme_type);
             }
-            $this->API?->logger?->logger('Translating methods...', Logger::ULTRA_VERBOSE);
+            //$this->API?->logger?->logger('Translating methods...', Logger::ULTRA_VERBOSE);
             foreach ($TL_dict['methods'] as $elem) {
                 $this->methods->add($elem, $scheme_type);
                 if ($scheme_type === 'secret') {
@@ -772,9 +772,16 @@ final class TL implements TLInterface
                     case '#':
                         $value = 0;
                         break;
+                    case 'strlong':
+                        $value = str_repeat("\0", 8);
+                        break;
                     default:
                         if ($this->API->getSettings()->getSchema()->getFuzzMode()) {
-                            $value = ['_' => $this->constructors->findByType($type)['predicate']];
+                            $value = $this->constructors->findByType($type);
+                            if ($value === false) {
+                                throw new Exception(sprintf(Lang::$current_lang['type_extract_error'], $type));
+                            }
+                            $value = ['_' => $value['predicate']];
                         } else {
                             throw new Exception(Lang::$current_lang['params_missing'].' '.$name);
                         }

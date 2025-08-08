@@ -140,7 +140,7 @@ class MTProtoOutgoingMessage extends MTProtoMessage
                 'error_code' => '408',
             ]);
 
-            if ($self->hasMsgId()) {
+            if ($self->hasMsgId() && $self->constructor !== 'rpc_drop_answer') {
                 $self->connection->API->logger("Cancelling $self...");
                 try {
                     $self->connection->API->logger($self->connection->methodCallAsyncRead(
@@ -257,7 +257,9 @@ class MTProtoOutgoingMessage extends MTProtoMessage
             }
         );
 
-        \assert($this->msgId !== null);
+        if ($this->msgId === null) {
+            return;
+        }
         if ($this->unencrypted) {
             $this->connection->unencryptedPendingOutgoing->check_queue[$this] = true;
         } elseif ($this->specialMethodType === SpecialMethodType::UNAUTHED_METHOD) {
