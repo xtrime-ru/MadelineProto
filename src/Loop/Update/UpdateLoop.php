@@ -104,6 +104,8 @@ final class UpdateLoop extends Loop implements SimpleSubscriber
         if ($this->authorizedDc === null) {
             return self::PAUSE;
         }
+        $this->API->feeders[$this->channelId] ??= new FeedLoop($this->API, $this->channelId);
+
         $this->feeder = $this->API->feeders[$this->channelId];
         $state = $this->channelId === self::GENERIC ? $this->API->loadUpdateState() : $this->API->loadChannelState($this->channelId);
 
