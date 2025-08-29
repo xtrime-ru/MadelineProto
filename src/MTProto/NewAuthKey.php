@@ -132,7 +132,9 @@ final class NewAuthKey implements SimpleSubscriber
             );
         } else {
             Assert::notNull($serverSalt, 'Server salt must not be null if auth key is not null');
-            Assert::notNull($this->id, 'Auth key must not be null if temp auth key is not null');
+            if (!$this->isCdn) {
+                Assert::notNull($this->id, 'Auth key must not be null if temp auth key is not null');
+            }
             $this->tempId = substr(sha1($authKey, true), -8);
             $this->tempAuthKeyForHash = substr($authKey, 88, 32);
             $this->connectionState->publish(
