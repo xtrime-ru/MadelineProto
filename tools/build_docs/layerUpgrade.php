@@ -13,7 +13,10 @@ function layerUpgrade(int $layer): void
     file_put_contents('docs/docs/docs/USING_METHODS.md', $doc);
 
     foreach (glob('src/*.tl') as $file) {
-        if (basename($file) === 'TL_filerefs.tl') {
+        if (basename($file) === 'TL_file_ref_map_schema.tl') {
+            continue;
+        }
+        if (basename($file) === 'TL_file_ref_map_schema.json') {
             continue;
         }
         unlink($file);

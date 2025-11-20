@@ -21,6 +21,7 @@ declare(strict_types=1);
 namespace danog\MadelineProto\Ipc;
 
 use Amp\DeferredFuture;
+use Amp\Future;
 use Amp\Ipc\Sync\ChannelledSocket;
 use danog\MadelineProto\Logger;
 use Throwable;
@@ -40,6 +41,8 @@ abstract class ClientAbstract
      * IPC server socket.
      */
     protected ChannelledSocket $server;
+    protected ?Future $serverFuture = null;
+
     private int $id = 0;
     /**
      * Requests promise array.
@@ -87,6 +90,7 @@ abstract class ClientAbstract
                     Logger::log("Got exception while receiving in IPC client: $e");
                 }
                 if (!$payload) {
+                    Logger::log("Disconnected from IPC server!");
                     break;
                 }
                 [$id, $payload] = $payload;
@@ -104,15 +108,18 @@ abstract class ClientAbstract
                 }
             }
             if ($this->run) {
-                $this->logger('Reconnecting to IPC server!');
-                try {
-                    $this->server->disconnect();
-                } catch (Throwable $e) {
-                }
                 if ($this instanceof Client) {
+                    $this->logger('Reconnecting to IPC server!');
+                    $f = new DeferredFuture;
+                    $this->serverFuture = $f->getFuture();
+                    try {
+                        $this->server->disconnect();
+                    } catch (Throwable $e) {
+                    }
                     try {
                         Server::startMe($this->session)->await();
                         $this->server = connect($this->session->getIpcPath());
+                        $this->logger('Reconnected to IPC server!');
                         $requests = $this->requests;
                         $this->requests = [];
                         $this->id = 0;
@@ -121,10 +128,18 @@ abstract class ClientAbstract
                             $this->requests[$id] = [$function, $arguments, $deferred];
                             $this->server->send([$function, $arguments]);
                         }
+                        $f->complete();
+                        $this->serverFuture = null;
+                        $this->logger('Resumed IPC queries!');
                     } catch (Throwable $e) {
-                        Logger::log("Got exception while reconnecting in IPC client: $e");
+                        $f->error($e);
+                        throw $e;
                     }
                 } else {
+                    try {
+                        $this->server->disconnect();
+                    } catch (Throwable $e) {
+                    }
                     return;
                 }
             }
@@ -151,6 +166,8 @@ abstract class ClientAbstract
      */
     public function __call(string|int $function, array|Wrapper $arguments)
     {
+        $this->serverFuture?->await();
+
         $deferred = new DeferredFuture;
         $id = $this->id++;
         $this->requests[$id] = [$function, $arguments, $deferred];

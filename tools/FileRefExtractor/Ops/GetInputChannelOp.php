@@ -18,15 +18,16 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
 use danog\MadelineProto\FileRefExtractor\FieldTransformationOp;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use Webmozart\Assert\Assert;
 
 final readonly class GetInputChannelOp implements FieldTransformationOp
 {
-    public function __construct(private readonly FieldExtractorOp $path)
-    {
+    public function __construct(
+        private Path $path,
+    ) {
     }
 
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
@@ -48,16 +49,23 @@ final readonly class GetInputChannelOp implements FieldTransformationOp
     public function build(TLContext $tl): array
     {
         $type = $this->path->getType($tl);
-        if ($type === 'InputChannel') {
-            return $this->path->build($tl);
-        }
         if ($type === 'long') {
             return [
                 '_' => 'typedOp',
                 'type' => $this->getType($tl),
                 'op' => [
                     '_' => 'getInputChannelByIdOp',
-                    'path' => $this->path->build($tl),
+                    'from' => $this->path->buildPath($tl, 'extractAndStore'),
+                ],
+            ];
+        }
+        if ($type === 'InputChannel') {
+            return [
+                '_' => 'typedOp',
+                'type' => $this->getType($tl),
+                'op' => [
+                    '_' => 'getInputChannelByIdOp',
+                    'from' => $this->path->buildPath($tl, 'extractChannelIdFromInputChannelAndStore'),
                 ],
             ];
         }
@@ -66,8 +74,8 @@ final readonly class GetInputChannelOp implements FieldTransformationOp
             '_' => 'typedOp',
             'type' => $this->getType($tl),
             'op' => [
-                '_' => 'getInputChannelOp',
-                'path' => $this->path->build($tl),
+                '_' => 'getInputChannelByIdOp',
+                'from' => $this->path->buildPath($tl, 'extractChannelIdFromChannelAndStore'),
             ],
         ];
     }

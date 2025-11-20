@@ -24,6 +24,7 @@ use Amp\ByteStream\PendingReadError;
 use Amp\ByteStream\StreamException;
 use Amp\Websocket\WebsocketClosedException;
 use danog\Loop\Loop;
+use danog\MadelineProto\API;
 use danog\MadelineProto\Logger;
 use danog\MadelineProto\MTProto\MTProtoIncomingMessage;
 use danog\MadelineProto\MTProtoTools\Crypt;
@@ -240,6 +241,7 @@ final class ReadLoop extends Loop
                 $deserialized = $this->API->getTL()->deserialize($message_data, ['type' => '', 'connection' => $this->connection, 'encrypted' => !$unencrypted]);
             } catch (\Throwable $e) {
                 Logger::log('Error during deserializing message (base64): ' .  base64_encode($message_data), Logger::ERROR);
+                $this->API->report("Schema issues, please report this to @danog_community: ".API::RELEASE.", $e");
                 throw $e;
             } finally {
                 $this->API->minDatabase->reset();

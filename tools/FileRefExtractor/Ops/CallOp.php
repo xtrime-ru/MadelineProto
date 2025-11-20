@@ -19,8 +19,6 @@ declare(strict_types=1);
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
 use danog\MadelineProto\FileRefExtractor\ActionOp;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Flat;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use danog\MadelineProto\FileRefExtractor\TypedOp;
 use Webmozart\Assert\Assert;
@@ -30,7 +28,8 @@ final readonly class CallOp implements ActionOp
     /** @param TypedOp[] $args */
     public function __construct(
         private readonly string $method,
-        private readonly array $args
+        private readonly array $args,
+        private readonly string $stored_constructor,
     ) {
         Assert::allIsInstanceOf($args, TypedOp::class);
     }
@@ -49,12 +48,12 @@ final readonly class CallOp implements ActionOp
             $final[$from] = $normalized;
         }
         if ($isDifferent) {
-            return new self($this->method, $final);
+            return new self($this->method, $final, $this->stored_constructor);
         }
         return $this;
     }
 
-    public static function simple(string $method, string $constructor, array $args): self
+    public static function simple(string $method, string $constructor, array $args, string $stored_constructor): self
     {
         $final = [];
         foreach ($args as $from => $to) {
@@ -63,7 +62,7 @@ final readonly class CallOp implements ActionOp
             }
             $final[$from] = $to;
         }
-        return new CallOp($method, $final);
+        return new CallOp($method, $final, $stored_constructor);
     }
 
     public function build(TLContext $tl): void
@@ -72,58 +71,15 @@ final readonly class CallOp implements ActionOp
         $tl->validateParams($this->method, false, $this->args);
         $types = [];
         foreach ($this->args as $from => $to) {
-            $final[] = ['_' => 'typedOpArg', 'key' => $from, 'value' => $to->build($tl)];
+            $final[$from] = ['_' => 'typedOpArg', 'key' => $from, 'value' => $tl->build($to, $from)];
             $types[$from] = $to->getType($tl);
         }
 
-        $out = $tl->buildMode;
-        if ($out instanceof Flat) {
-            /*
-            foreach ($out->backrefs as $cons => $type) {
-                $out->actionsPre[$cons] ??= [];
-                array_unshift($out->actionsPre[$cons], [
-                    '_' => 'pushContext',
-                    'ctx' => $out->contextName,
-                ]);
-
-                $out->actionsPost[$cons] ??= [];
-                array_push($out->actionsPost[$cons], [
-                    '_' => 'processContext',
-                    'ctx' => $out->contextName,
-                    'method' => $this->method,
-                    'args' => $final,
-                ]);
-                array_push($out->actionsPost[$cons], [
-                    '_' => 'popContext',
-                    'ctx' => $out->contextName,
-                ]);
-            }
-
-            $out->actionsPost[$cons][] = [
-                '_' => 'processContext',
-                'ctx' => $out->contextName,
-                'method' => $this->method,
-                'args' => $final,
-            ];
-            if ($hasBackref) {
-                $out->actionsPost[$cons][] = [
-                    '_' => 'deleteContextEntries',
-                    'ctx' => $out->contextName,
-                    'entries' => array_keys($final),
-                ];
-            } else {
-                $out->actionsPost[$cons][] = [
-                    '_' => 'popContext',
-                    'ctx' => $out->contextName,
-                ];
-            }*/
-        } else {
-            \assert($out instanceof Ast);
-            $out->addNode($tl, [
-                '_' => 'callOp',
-                'method' => $this->method,
-                'args' => $final,
-            ]);
-        }
+        $tl->buildMode->addNode($tl, [
+            '_' => 'callOp',
+            'method' => $this->method,
+            'args' => $final,
+            'stored_constructor' => $this->stored_constructor,
+        ]);
     }
 }

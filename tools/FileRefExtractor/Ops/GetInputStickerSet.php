@@ -18,55 +18,58 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
-use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Flat;
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
+use danog\MadelineProto\FileRefExtractor\FieldTransformationOp;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
-use danog\MadelineProto\FileRefExtractor\TypedOp;
+use Webmozart\Assert\Assert;
 
-final readonly class ExtractFromParentOp extends FieldExtractorOp
+final readonly class GetInputStickerSet implements FieldTransformationOp
 {
+    public function __construct(
+        private Path $path,
+    ) {
+    }
+
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
     {
-        if ($stack[0][0] !== $this->path[0][0]) {
+        if ($ignoreFlag) {
             return null;
         }
-        $new = [];
-        $isDifferent = false;
-        foreach ($this->path as $i => $part) {
-            if ($ignoreFlag && \array_key_exists(2, $part) && \is_int($part[2]) && ($part[2] & CopyOp::FLAG_IF_ABSENT_ABORT)) {
-                return null;
-            }
-            if (isset($part[2]) && $part[2] instanceof TypedOp) {
-                $n = $part[2]->normalize($stack, $current, $ignoreFlag);
-                if ($n === null) {
-                    return null;
-                }
-                if ($n !== $part[2]) {
-                    $isDifferent = true;
-                    $part[2] = $n;
-                }
-            }
-            $new[$i] = $part;
+        $path = $this->path->normalize($stack, $current, $ignoreFlag);
+        if ($path === null) {
+            return null;
         }
-        if ($isDifferent) {
-            return new CopyOp($new);
+        if ($path !== $this->path) {
+            return new self($path);
         }
         return $this;
     }
 
+    public function getType(TLContext $tl): string
+    {
+        return 'InputStickerSet';
+    }
+
     public function build(TLContext $tl): array
     {
-        if ($tl->buildMode instanceof Flat) {
-        } elseif ($tl->buildMode instanceof Ast) {
-            $tl->buildMode->setNeedsParent($this->path[0][0]);
+        $t = $this->path->getType($tl);
+        if ($t === 'StickerSet') {
+            return [
+                '_' => 'typedOp',
+                'type' => 'InputStickerSet',
+                'op' => [
+                    '_' => 'copyOp',
+                    'from' => $this->path->buildPath($tl, 'extractInputStickerSetFromStickerSetAndStore'),
+                ],
+            ];
         }
+        Assert::eq($t, 'Vector<DocumentAttribute>');
         return [
             '_' => 'typedOp',
             'type' => $this->getType($tl),
             'op' => [
-                '_' => 'copyFromParentOp',
-                'path' => $this->buildPath($tl),
+                '_' => 'copyOp',
+                'from' => $this->path->buildPath($tl, 'extractInputStickerSetFromDocumentAttributesAndStore'),
             ],
         ];
     }

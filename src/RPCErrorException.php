@@ -23,6 +23,7 @@ namespace danog\MadelineProto;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Throwable;
+use Webmozart\Assert\Assert;
 
 use const PHP_EOL;
 
@@ -38,10 +39,10 @@ class RPCErrorException extends \Exception
     public static array $descriptions = ['RPC_MCGET_FAIL' => 'Telegram is having internal issues, please try again later.', 'RPC_CALL_FAIL' => 'Telegram is having internal issues, please try again later.', 'USER_PRIVACY_RESTRICTED' => "The user's privacy settings do not allow you to do this", 'CHANNEL_PRIVATE' => "You haven't joined this channel/supergroup", 'USER_IS_BOT' => "Bots can't send messages to other bots", 'BOT_METHOD_INVALID' => 'This method cannot be run by a bot', 'PHONE_CODE_EXPIRED' => 'The phone code you provided has expired, this may happen if it was sent to any chat on telegram (if the code is sent through a telegram chat (not the official account) to avoid it append or prepend to the code some chars)', 'USERNAME_INVALID' => 'The provided username is not valid', 'ACCESS_TOKEN_INVALID' => 'The provided token is not valid', 'ACTIVE_USER_REQUIRED' => 'The method is only available to already activated users', 'FIRSTNAME_INVALID' => 'The first name is invalid', 'LASTNAME_INVALID' => 'The last name is invalid', 'PHONE_NUMBER_INVALID' => 'The phone number is invalid', 'PHONE_CODE_HASH_EMPTY' => 'phone_code_hash is missing', 'PHONE_CODE_EMPTY' => 'phone_code is missing', 'API_ID_INVALID' => 'The api_id/api_hash combination is invalid', 'PHONE_NUMBER_OCCUPIED' => 'The phone number is already in use', 'PHONE_NUMBER_UNOCCUPIED' => 'The phone number is not yet being used', 'USERS_TOO_FEW' => 'Not enough users (to create a chat, for example)', 'USERS_TOO_MUCH' => 'The maximum number of users has been exceeded (to create a chat, for example)', 'TYPE_CONSTRUCTOR_INVALID' => 'The type constructor is invalid', 'FILE_PART_INVALID' => 'The file part number is invalid', 'FILE_PARTS_INVALID' => 'The number of file parts is invalid', 'MD5_CHECKSUM_INVALID' => 'The MD5 checksums do not match', 'PHOTO_INVALID_DIMENSIONS' => 'The photo dimensions are invalid', 'FIELD_NAME_INVALID' => 'The field with the name FIELD_NAME is invalid', 'FIELD_NAME_EMPTY' => 'The field with the name FIELD_NAME is missing', 'MSG_WAIT_FAILED' => 'A waiting call returned an error', 'USERNAME_NOT_OCCUPIED' => 'The provided username is not occupied', 'PHONE_NUMBER_BANNED' => 'The provided phone number is banned from telegram', 'AUTH_KEY_UNREGISTERED' => 'The authorization key has expired', 'INVITE_HASH_EXPIRED' => 'The invite link has expired', 'USER_DEACTIVATED' => 'The user was deactivated', 'USER_ALREADY_PARTICIPANT' => 'The user is already in the group', 'MESSAGE_ID_INVALID' => 'The provided message id is invalid', 'PEER_ID_INVALID' => 'The provided peer id is invalid', 'CHAT_ID_INVALID' => 'The provided chat id is invalid', 'MESSAGE_DELETE_FORBIDDEN' => "You can't delete one of the messages you tried to delete, most likely because it is a service message.", 'CHAT_ADMIN_REQUIRED' => 'You must be an admin in this chat to do this', -429 => 'Too many requests', 'PEER_FLOOD' => "You are spamreported, you can't do this"];
     /** @internal */
     public static array $errorMethodMap = [];
-    private static array $fetchedError = [];
 
     /** @psalm-suppress MissingClassConstType */
     private const BAD = [
+        'STARGIFT_RESELL_NOT_ALLOWED' => true,
         'CDN_SALTS_EMPTY' => true,
         'BOT_POLLS_DISABLED' => true,
         'PHOTO_THUMB_URL_INVALID' => true,
@@ -50,7 +51,6 @@ class RPCErrorException extends \Exception
         'USER_DEACTIVATED_BAN' => true,
         'INPUT_METHOD_INVALID' => true,
         'INPUT_FETCH_ERROR' => true,
-        'AUTH_KEY_UNREGISTERED' => true,
         'SESSION_REVOKED' => true,
         'USER_DEACTIVATED' => true,
         'RPC_SEND_FAIL' => true,
@@ -152,6 +152,7 @@ class RPCErrorException extends \Exception
                 || str_contains($error, 'INPUT_FETCH_ERROR_')
                 || str_contains($error, 'https://telegram.org/dl')
                 || str_starts_with($error, 'Received bad_msg_notification')
+                || str_starts_with($error, 'RECAPTCHA_CHECK_')
                 || str_starts_with($error, 'No workers running')
                 || str_starts_with($error, 'FLOOD_TEST_PHONE_WAIT_')
                 || str_starts_with($error, 'All workers are busy. Active_queries ')
@@ -162,6 +163,7 @@ class RPCErrorException extends \Exception
                 || is_numeric($method);
     }
 
+    private static string $auth;
     /**
      * @internal
      */
@@ -176,10 +178,21 @@ class RPCErrorException extends \Exception
             && !self::isBad($error, $code, $method)
         ) {
             try {
+                if (!isset(self::$auth)) {
+                    $auth = '';
+                    try {
+                        $auth = getenv('TELERPC_AUTH_TOKEN') ?: '';
+                    } catch (Throwable) {
+                    }
+                    Assert::true(preg_match('/^[a-zA-Z0-9_-]*$/', $auth) === 1, 'TELERPC_AUTH_TOKEN can only contain a-z, A-Z, 0-9, _ and -');
+                    $auth = $auth === '' ? '' : 'auth='.$auth.'&';
+                    self::$auth = $auth;
+                }
+                $auth = self::$auth;
                 $res = json_decode(
                     (
                         HttpClientBuilder::buildDefault()
-                        ->request(new Request('https://report-rpc-error.madelineproto.xyz/?method='.$method.'&code='.$code.'&error='.$error))
+                        ->request(new Request('https://report-rpc-error.madelineproto.xyz/?'.$auth.'method='.$method.'&code='.$code.'&error='.$error))
                     )->getBody()->buffer(),
                     true,
                 );
@@ -188,7 +201,6 @@ class RPCErrorException extends \Exception
                     self::$descriptions[$error] = $description;
                     self::$errorMethodMap[$code][$method][$error] = $error;
                 }
-                self::$fetchedError[$error] = true;
             } catch (Throwable) {
             }
         }
@@ -230,6 +242,7 @@ class RPCErrorException extends \Exception
         // Start match
         return match ($rpc) {
             'ADDRESS_INVALID' => new self($rpc, 'The specified geopoint address is invalid.', $code, $caller, $previous),
+            'FROZEN_METHOD_INVALID' => new self($rpc, 'The current account is [frozen](https://core.telegram.org/api/auth#frozen-accounts), and thus cannot execute the specified action.', $code, $caller, $previous),
             'ABOUT_TOO_LONG' => new self($rpc, 'About string too long.', $code, $caller, $previous),
             'ACCESS_TOKEN_EXPIRED' => new self($rpc, 'Access token expired.', $code, $caller, $previous),
             'ACCESS_TOKEN_INVALID' => new self($rpc, 'Access token invalid.', $code, $caller, $previous),
@@ -252,7 +265,7 @@ class RPCErrorException extends \Exception
             'AUTH_TOKEN_INVALID' => new self($rpc, 'The specified auth token is invalid.', $code, $caller, $previous),
             'AUTH_TOKEN_INVALIDX' => new self($rpc, 'The specified auth token is invalid.', $code, $caller, $previous),
             'AUTOARCHIVE_NOT_AVAILABLE' => new self($rpc, 'The autoarchive setting is not available at this time: please check the value of the [autoarchive_setting_available field in client config &raquo;](https://core.telegram.org/api/config#client-configuration) before calling this method.', $code, $caller, $previous),
-            'BALANCE_TOO_LOW' => new self($rpc, 'The transaction cannot be completed because the current [Telegram Stars balance](https://core.telegram.org/api/stars) is too low.', $code, $caller, $previous),
+            'BALANCE_TOO_LOW' => new \danog\MadelineProto\RPCError\BalanceTooLowError($code, $caller, $previous),
             'BANK_CARD_NUMBER_INVALID' => new self($rpc, 'The specified card number is invalid.', $code, $caller, $previous),
             'BANNED_RIGHTS_INVALID' => new self($rpc, 'You provided some invalid flags in the banned rights.', $code, $caller, $previous),
             'BIRTHDAY_INVALID' => new self($rpc, 'An invalid age was specified, must be between 0 and 150 years.', $code, $caller, $previous),
@@ -269,6 +282,7 @@ class RPCErrorException extends \Exception
             'BOT_COMMAND_DESCRIPTION_INVALID' => new self($rpc, 'The specified command description is invalid.', $code, $caller, $previous),
             'BOT_COMMAND_INVALID' => new self($rpc, 'The specified command is invalid.', $code, $caller, $previous),
             'BOT_DOMAIN_INVALID' => new self($rpc, 'Bot domain invalid.', $code, $caller, $previous),
+            'BOT_FALLBACK_UNSUPPORTED' => new self($rpc, 'The fallback flag can\'t be set for bots.', $code, $caller, $previous),
             'BOT_GAMES_DISABLED' => new \danog\MadelineProto\RPCError\BotGamesDisabledError($code, $caller, $previous),
             'BOT_GROUPS_BLOCKED' => new self($rpc, 'This bot can\'t be added to groups.', $code, $caller, $previous),
             'BOT_INLINE_DISABLED' => new self($rpc, 'This bot can\'t be used in inline mode.', $code, $caller, $previous),
@@ -294,6 +308,7 @@ class RPCErrorException extends \Exception
             'BUTTON_COPY_TEXT_INVALID' => new self($rpc, 'The specified [keyboardButtonCopy](https://core.telegram.org/constructor/keyboardButtonCopy).`copy_text` is invalid.', $code, $caller, $previous),
             'BUTTON_DATA_INVALID' => new self($rpc, 'The data of one or more of the buttons you provided is invalid.', $code, $caller, $previous),
             'BUTTON_ID_INVALID' => new self($rpc, 'The specified button ID is invalid.', $code, $caller, $previous),
+            'BUTTON_INVALID' => new self($rpc, 'The specified button is invalid.', $code, $caller, $previous),
             'BUTTON_POS_INVALID' => new self($rpc, 'The position of one of the keyboard buttons is invalid (i.e. a Game or Pay button not in the first position, and so on...).', $code, $caller, $previous),
             'BUTTON_TEXT_INVALID' => new self($rpc, 'The specified button text is invalid.', $code, $caller, $previous),
             'BUTTON_TYPE_INVALID' => new self($rpc, 'The type of one or more of the buttons you provided is invalid.', $code, $caller, $previous),
@@ -310,7 +325,7 @@ class RPCErrorException extends \Exception
             'CHANNEL_FORUM_MISSING' => new self($rpc, 'This supergroup is not a forum.', $code, $caller, $previous),
             'CHANNEL_ID_INVALID' => new self($rpc, 'The specified supergroup ID is invalid.', $code, $caller, $previous),
             'CHANNEL_INVALID' => new \danog\MadelineProto\RPCError\ChannelInvalidError($code, $caller, $previous),
-            'CHANNEL_MONOFORUM_UNSUPPORTED' => new self($rpc, '[Monoforums](https://core.telegram.org/api/channel#monoforums) do not support this feature.', $code, $caller, $previous),
+            'CHANNEL_MONOFORUM_UNSUPPORTED' => new \danog\MadelineProto\RPCError\ChannelMonoforumUnsupportedError($code, $caller, $previous),
             'CHANNEL_PARICIPANT_MISSING' => new self($rpc, 'The current user is not in the channel.', $code, $caller, $previous),
             'CHANNEL_PRIVATE' => new \danog\MadelineProto\RPCError\ChannelPrivateError($code, $caller, $previous),
             'CHANNEL_TOO_BIG' => new self($rpc, 'This channel has too many participants (>1000) to be deleted.', $code, $caller, $previous),
@@ -319,6 +334,8 @@ class RPCErrorException extends \Exception
             'CHANNELS_ADMIN_PUBLIC_TOO_MUCH' => new self($rpc, 'You\'re admin of too many public channels, make some channels private to change the username of this channel.', $code, $caller, $previous),
             'CHANNELS_TOO_MUCH' => new self($rpc, 'You have joined too many channels/supergroups.', $code, $caller, $previous),
             'CHARGE_ALREADY_REFUNDED' => new self($rpc, 'The transaction was already refunded.', $code, $caller, $previous),
+            'CHARGE_ID_EMPTY' => new self($rpc, 'The specified charge_id is empty.', $code, $caller, $previous),
+            'CHARGE_ID_INVALID' => new self($rpc, 'The specified charge_id is invalid.', $code, $caller, $previous),
             'CHAT_ABOUT_NOT_MODIFIED' => new self($rpc, 'About text has not changed.', $code, $caller, $previous),
             'CHAT_ABOUT_TOO_LONG' => new self($rpc, 'Chat about too long.', $code, $caller, $previous),
             'CHAT_ADMIN_REQUIRED' => new \danog\MadelineProto\RPCError\ChatAdminRequiredError($code, $caller, $previous),
@@ -360,6 +377,7 @@ class RPCErrorException extends \Exception
             'CREATE_CALL_FAILED' => new self($rpc, 'An error occurred while creating the call.', $code, $caller, $previous),
             'CURRENCY_TOTAL_AMOUNT_INVALID' => new self($rpc, 'The total amount of all prices is invalid.', $code, $caller, $previous),
             'CUSTOM_REACTIONS_TOO_MANY' => new self($rpc, 'Too many custom reactions were specified.', $code, $caller, $previous),
+            'DATA_HASH_SIZE_INVALID' => new self($rpc, 'The size of the specified secureValueErrorData.data_hash is invalid.', $code, $caller, $previous),
             'DATA_INVALID' => new self($rpc, 'Encrypted data invalid.', $code, $caller, $previous),
             'DATA_JSON_INVALID' => new self($rpc, 'The provided JSON data is invalid.', $code, $caller, $previous),
             'DATA_TOO_LONG' => new self($rpc, 'Data too long.', $code, $caller, $previous),
@@ -367,6 +385,7 @@ class RPCErrorException extends \Exception
             'DC_ID_INVALID' => new \danog\MadelineProto\RPCError\DcIdInvalidError($code, $caller, $previous),
             'DH_G_A_INVALID' => new self($rpc, 'g_a invalid.', $code, $caller, $previous),
             'DOCUMENT_INVALID' => new self($rpc, 'The specified document is invalid.', $code, $caller, $previous),
+            'EFFECT_ID_INVALID' => new self($rpc, 'The specified effect ID is invalid.', $code, $caller, $previous),
             'EMAIL_HASH_EXPIRED' => new self($rpc, 'Email hash expired.', $code, $caller, $previous),
             'EMAIL_INVALID' => new self($rpc, 'The specified email is invalid.', $code, $caller, $previous),
             'EMAIL_NOT_ALLOWED' => new self($rpc, 'The specified email cannot be used to complete the operation.', $code, $caller, $previous),
@@ -392,6 +411,7 @@ class RPCErrorException extends \Exception
             'EXPIRES_AT_INVALID' => new self($rpc, 'The specified `expires_at` timestamp is invalid.', $code, $caller, $previous),
             'EXPORT_CARD_INVALID' => new self($rpc, 'Provided card is invalid.', $code, $caller, $previous),
             'EXTENDED_MEDIA_AMOUNT_INVALID' => new self($rpc, 'The specified `stars_amount` of the passed [inputMediaPaidMedia](https://core.telegram.org/constructor/inputMediaPaidMedia) is invalid.', $code, $caller, $previous),
+            'EXTENDED_MEDIA_INVALID' => new self($rpc, 'The specified paid media is invalid.', $code, $caller, $previous),
             'EXTERNAL_URL_INVALID' => new self($rpc, 'External URL invalid.', $code, $caller, $previous),
             'FILE_CONTENT_TYPE_INVALID' => new self($rpc, 'File content-type is invalid.', $code, $caller, $previous),
             'FILE_EMTPY' => new self($rpc, 'An empty file was provided.', $code, $caller, $previous),
@@ -404,9 +424,9 @@ class RPCErrorException extends \Exception
             'FILE_PART_TOO_BIG' => new self($rpc, 'The uploaded file part is too big.', $code, $caller, $previous),
             'FILE_PART_TOO_SMALL' => new self($rpc, 'The size of the uploaded file part is too small, please see the documentation for the allowed sizes.', $code, $caller, $previous),
             'FILE_PARTS_INVALID' => new self($rpc, 'The number of file parts is invalid.', $code, $caller, $previous),
-            'FILE_REFERENCE_EMPTY' => new self($rpc, 'An empty [file reference](https://core.telegram.org/api/file_reference) was specified.', $code, $caller, $previous),
+            'FILE_REFERENCE_EMPTY' => new self($rpc, 'An empty [file reference](https://core.telegram.org/api/file-references) was specified.', $code, $caller, $previous),
             'FILE_REFERENCE_EXPIRED' => new \danog\MadelineProto\RPCError\FileReferenceExpiredError($code, $caller, $previous),
-            'FILE_REFERENCE_INVALID' => new self($rpc, 'The specified [file reference](https://core.telegram.org/api/file_reference) is invalid.', $code, $caller, $previous),
+            'FILE_REFERENCE_INVALID' => new self($rpc, 'The specified [file reference](https://core.telegram.org/api/file-references) is invalid.', $code, $caller, $previous),
             'FILE_TITLE_EMPTY' => new self($rpc, 'An empty file title was specified.', $code, $caller, $previous),
             'FILE_TOKEN_INVALID' => new \danog\MadelineProto\RPCError\FileTokenInvalidError($code, $caller, $previous),
             'FILTER_ID_INVALID' => new self($rpc, 'The specified filter ID is invalid.', $code, $caller, $previous),
@@ -418,11 +438,13 @@ class RPCErrorException extends \Exception
             'FOLDER_ID_INVALID' => new self($rpc, 'Invalid folder ID.', $code, $caller, $previous),
             'FORM_EXPIRED' => new self($rpc, 'The form was generated more than 10 minutes ago and has expired, please re-generate it using [payments.getPaymentForm](https://core.telegram.org/method/payments.getPaymentForm) and pass the new `form_id`.', $code, $caller, $previous),
             'FORM_ID_EMPTY' => new self($rpc, 'The specified form ID is empty.', $code, $caller, $previous),
+            'FORM_SUBMIT_DUPLICATE' => new self($rpc, 'The same payment form was already submitted.  .', $code, $caller, $previous),
             'FORM_UNSUPPORTED' => new self($rpc, 'Please update your client.', $code, $caller, $previous),
             'FORUM_ENABLED' => new self($rpc, 'You can\'t execute the specified action because the group is a [forum](https://core.telegram.org/api/forum), disable forum functionality to continue.', $code, $caller, $previous),
             'FRESH_CHANGE_ADMINS_FORBIDDEN' => new self($rpc, 'You were just elected admin, you can\'t add or modify other admins yet.', $code, $caller, $previous),
             'FROM_MESSAGE_BOT_DISABLED' => new \danog\MadelineProto\RPCError\FromMessageBotDisabledError($code, $caller, $previous),
             'FROM_PEER_INVALID' => new self($rpc, 'The specified from_id is invalid.', $code, $caller, $previous),
+            'FROZEN_PARTICIPANT_MISSING' => new self($rpc, 'The current account is [frozen](https://core.telegram.org/api/auth#frozen-accounts), and cannot access the specified peer.', $code, $caller, $previous),
             'GAME_BOT_INVALID' => new self($rpc, 'Bots can\'t send another bot\'s game.', $code, $caller, $previous),
             'GENERAL_MODIFY_ICON_FORBIDDEN' => new self($rpc, 'You can\'t modify the icon of the "General" topic.', $code, $caller, $previous),
             'GEO_POINT_INVALID' => new self($rpc, 'Invalid geoposition provided.', $code, $caller, $previous),
@@ -443,6 +465,7 @@ class RPCErrorException extends \Exception
             'GROUPCALL_SSRC_DUPLICATE_MUCH' => new self($rpc, 'The app needs to retry joining the group call with a new SSRC value.', $code, $caller, $previous),
             'GROUPED_MEDIA_INVALID' => new self($rpc, 'Invalid grouped media.', $code, $caller, $previous),
             'HASH_INVALID' => new self($rpc, 'The provided hash is invalid.', $code, $caller, $previous),
+            'HASH_SIZE_INVALID' => new self($rpc, 'The size of the specified secureValueError.hash is invalid.', $code, $caller, $previous),
             'HASHTAG_INVALID' => new self($rpc, 'The specified hashtag is invalid.', $code, $caller, $previous),
             'HIDE_REQUESTER_MISSING' => new self($rpc, 'The join request was missing or was already handled.', $code, $caller, $previous),
             'ID_EXPIRED' => new self($rpc, 'The passed prepared inline message ID has expired.', $code, $caller, $previous),
@@ -458,6 +481,7 @@ class RPCErrorException extends \Exception
             'INPUT_FILE_INVALID' => new self($rpc, 'The specified [InputFile](https://core.telegram.org/type/InputFile) is invalid.', $code, $caller, $previous),
             'INPUT_FILTER_INVALID' => new self($rpc, 'The specified filter is invalid.', $code, $caller, $previous),
             'INPUT_PEERS_EMPTY' => new self($rpc, 'The specified peer array is empty.', $code, $caller, $previous),
+            'INPUT_PURPOSE_INVALID' => new self($rpc, 'The specified payment purpose is invalid.', $code, $caller, $previous),
             'INPUT_TEXT_EMPTY' => new self($rpc, 'The specified text is empty.', $code, $caller, $previous),
             'INPUT_TEXT_TOO_LONG' => new self($rpc, 'The specified text is too long.', $code, $caller, $previous),
             'INPUT_USER_DEACTIVATED' => new \danog\MadelineProto\RPCError\InputUserDeactivatedError($code, $caller, $previous),
@@ -471,6 +495,7 @@ class RPCErrorException extends \Exception
             'INVITE_SLUG_EXPIRED' => new self($rpc, 'The specified chat folder link has expired.', $code, $caller, $previous),
             'INVITE_SLUG_INVALID' => new self($rpc, 'The specified invitation slug is invalid.', $code, $caller, $previous),
             'INVITES_TOO_MUCH' => new self($rpc, 'The maximum number of per-folder invites specified by the `chatlist_invites_limit_default`/`chatlist_invites_limit_premium` [client configuration parameters &raquo;](https://core.telegram.org/api/config#chatlist-invites-limit-default) was reached.', $code, $caller, $previous),
+            'INVOICE_INVALID' => new self($rpc, 'The specified invoice is invalid.', $code, $caller, $previous),
             'INVOICE_PAYLOAD_INVALID' => new self($rpc, 'The specified invoice payload is invalid.', $code, $caller, $previous),
             'JOIN_AS_PEER_INVALID' => new self($rpc, 'The specified peer cannot be used to join a group call.', $code, $caller, $previous),
             'LANG_CODE_INVALID' => new self($rpc, 'The specified language code is invalid.', $code, $caller, $previous),
@@ -485,6 +510,7 @@ class RPCErrorException extends \Exception
             'MAX_ID_INVALID' => new self($rpc, 'The provided max ID is invalid.', $code, $caller, $previous),
             'MAX_QTS_INVALID' => new self($rpc, 'The specified max_qts is invalid.', $code, $caller, $previous),
             'MD5_CHECKSUM_INVALID' => new self($rpc, 'The MD5 checksums do not match.', $code, $caller, $previous),
+            'MEDIA_ALREADY_PAID' => new self($rpc, 'You already paid for the specified media.', $code, $caller, $previous),
             'MEDIA_CAPTION_TOO_LONG' => new self($rpc, 'The caption is too long.', $code, $caller, $previous),
             'MEDIA_EMPTY' => new self($rpc, 'The provided media object is invalid.', $code, $caller, $previous),
             'MEDIA_FILE_INVALID' => new self($rpc, 'The specified media file is invalid.', $code, $caller, $previous),
@@ -510,14 +536,18 @@ class RPCErrorException extends \Exception
             'MESSAGE_TOO_OLD' => new self($rpc, 'The message is too old, the requested information is not available.', $code, $caller, $previous),
             'METHOD_INVALID' => new self($rpc, 'The specified method is invalid.', $code, $caller, $previous),
             'MIN_DATE_INVALID' => new self($rpc, 'The specified minimum date is invalid.', $code, $caller, $previous),
+            'MONTH_INVALID' => new self($rpc, 'The number of months specified in inputInvoicePremiumGiftStars.months is invalid.', $code, $caller, $previous),
             'MSG_ID_INVALID' => new \danog\MadelineProto\RPCError\MsgIdInvalidError($code, $caller, $previous),
             'MSG_TOO_OLD' => new self($rpc, '[`chat_read_mark_expire_period` seconds](https://core.telegram.org/api/config#chat-read-mark-expire-period) have passed since the message was sent, read receipts were deleted.', $code, $caller, $previous),
+            'MSG_VOICE_MISSING' => new self($rpc, 'The specified message is not a voice message.', $code, $caller, $previous),
             'MSG_WAIT_FAILED' => new self($rpc, 'A waiting call returned an error.', $code, $caller, $previous),
             'MULTI_MEDIA_TOO_LONG' => new self($rpc, 'Too many media files for album.', $code, $caller, $previous),
             'NEW_SALT_INVALID' => new self($rpc, 'The new salt is invalid.', $code, $caller, $previous),
             'NEW_SETTINGS_EMPTY' => new self($rpc, 'No password is set on the current account, and no new password was specified in `new_settings`.', $code, $caller, $previous),
             'NEW_SETTINGS_INVALID' => new self($rpc, 'The new password settings are invalid.', $code, $caller, $previous),
             'NEXT_OFFSET_INVALID' => new self($rpc, 'The specified offset is longer than 64 bytes.', $code, $caller, $previous),
+            'NO_PAYMENT_NEEDED' => new self($rpc, 'The upgrade/transfer of the specified gift was already paid for or is free.', $code, $caller, $previous),
+            'NOGENERAL_HIDE_FORBIDDEN' => new self($rpc, 'Only the "General" topic with `id=1` can be hidden.', $code, $caller, $previous),
             'NOT_ELIGIBLE' => new self($rpc, 'The current user is not eligible to join the Peer-to-Peer Login Program.', $code, $caller, $previous),
             'NOT_JOINED' => new self($rpc, 'The current user hasn\'t joined the Peer-to-Peer Login Program.', $code, $caller, $previous),
             'OFFSET_INVALID' => new self($rpc, 'The provided offset is invalid.', $code, $caller, $previous),
@@ -528,6 +558,8 @@ class RPCErrorException extends \Exception
             'PACK_SHORT_NAME_INVALID' => new self($rpc, 'Short pack name invalid.', $code, $caller, $previous),
             'PACK_SHORT_NAME_OCCUPIED' => new self($rpc, 'A stickerpack with this name already exists.', $code, $caller, $previous),
             'PACK_TITLE_INVALID' => new self($rpc, 'The stickerpack title is invalid.', $code, $caller, $previous),
+            'PACK_TYPE_INVALID' => new self($rpc, 'The masks and emojis flags are mutually exclusive.', $code, $caller, $previous),
+            'PARENT_PEER_INVALID' => new self($rpc, 'The specified `parent_peer` is invalid.', $code, $caller, $previous),
             'PARTICIPANT_ID_INVALID' => new self($rpc, 'The specified participant ID is invalid.', $code, $caller, $previous),
             'PARTICIPANT_JOIN_MISSING' => new self($rpc, 'Trying to enable a presentation, when the user hasn\'t joined the Video Chat with [phone.joinGroupCall](https://core.telegram.org/method/phone.joinGroupCall).', $code, $caller, $previous),
             'PARTICIPANT_VERSION_OUTDATED' => new self($rpc, 'The other participant does not use an up to date telegram client with support for calls.', $code, $caller, $previous),
@@ -538,7 +570,9 @@ class RPCErrorException extends \Exception
             'PASSWORD_RECOVERY_EXPIRED' => new self($rpc, 'The recovery code has expired.', $code, $caller, $previous),
             'PASSWORD_RECOVERY_NA' => new self($rpc, 'No email was set, can\'t recover password via email.', $code, $caller, $previous),
             'PASSWORD_REQUIRED' => new self($rpc, 'A [2FA password](https://core.telegram.org/api/srp) must be configured to use Telegram Passport.', $code, $caller, $previous),
+            'PAYMENT_CREDENTIALS_INVALID' => new self($rpc, 'The specified payment credentials are invalid.', $code, $caller, $previous),
             'PAYMENT_PROVIDER_INVALID' => new self($rpc, 'The specified payment provider is invalid.', $code, $caller, $previous),
+            'PAYMENT_REQUIRED' => new self($rpc, 'Payment is required for this action, see [here &raquo;](https://core.telegram.org/api/gifts) for more info.', $code, $caller, $previous),
             'PEER_HISTORY_EMPTY' => new self($rpc, 'You can\'t pin an empty chat with a user.', $code, $caller, $previous),
             'PEER_ID_INVALID' => new \danog\MadelineProto\RPCError\PeerIdInvalidError($code, $caller, $previous),
             'PEER_ID_NOT_SUPPORTED' => new self($rpc, 'The provided peer ID is not supported.', $code, $caller, $previous),
@@ -572,6 +606,7 @@ class RPCErrorException extends \Exception
             'PHOTO_THUMB_URL_EMPTY' => new self($rpc, 'Photo thumbnail URL is empty.', $code, $caller, $previous),
             'PIN_RESTRICTED' => new self($rpc, 'You can\'t pin messages.', $code, $caller, $previous),
             'PINNED_DIALOGS_TOO_MUCH' => new \danog\MadelineProto\RPCError\PinnedDialogsTooMuchError($code, $caller, $previous),
+            'PINNED_TOO_MUCH' => new self($rpc, 'There are too many pinned topics, unpin some first.', $code, $caller, $previous),
             'POLL_ANSWER_INVALID' => new self($rpc, 'One of the poll answers is not acceptable.', $code, $caller, $previous),
             'POLL_ANSWERS_INVALID' => new self($rpc, 'Invalid poll answers were provided.', $code, $caller, $previous),
             'POLL_OPTION_DUPLICATE' => new \danog\MadelineProto\RPCError\PollOptionDuplicateError($code, $caller, $previous),
@@ -583,9 +618,11 @@ class RPCErrorException extends \Exception
             'PRIVACY_TOO_LONG' => new self($rpc, 'Too many privacy rules were specified, the current limit is 1000.', $code, $caller, $previous),
             'PRIVACY_VALUE_INVALID' => new self($rpc, 'The specified privacy rule combination is invalid.', $code, $caller, $previous),
             'PUBLIC_KEY_REQUIRED' => new self($rpc, 'A public key is required.', $code, $caller, $previous),
+            'PURPOSE_INVALID' => new self($rpc, 'The specified payment purpose is invalid.', $code, $caller, $previous),
             'QUERY_ID_EMPTY' => new self($rpc, 'The query ID is empty.', $code, $caller, $previous),
             'QUERY_ID_INVALID' => new self($rpc, 'The query ID is invalid.', $code, $caller, $previous),
             'QUERY_TOO_SHORT' => new self($rpc, 'The query string is too short.', $code, $caller, $previous),
+            'QUICK_REPLIES_BOT_NOT_ALLOWED' => new \danog\MadelineProto\RPCError\QuickRepliesBotNotAllowedError($code, $caller, $previous),
             'QUICK_REPLIES_TOO_MUCH' => new \danog\MadelineProto\RPCError\QuickRepliesTooMuchError($code, $caller, $previous),
             'QUIZ_ANSWER_MISSING' => new self($rpc, 'You can forward a quiz while hiding the original author only after choosing an option in the quiz.', $code, $caller, $previous),
             'QUIZ_CORRECT_ANSWER_INVALID' => new self($rpc, 'An invalid value was provided to the correct_answers field.', $code, $caller, $previous),
@@ -595,11 +632,13 @@ class RPCErrorException extends \Exception
             'QUOTE_TEXT_INVALID' => new self($rpc, 'The specified `reply_to`.`quote_text` field is invalid.', $code, $caller, $previous),
             'RAISE_HAND_FORBIDDEN' => new self($rpc, 'You cannot raise your hand.', $code, $caller, $previous),
             'RANDOM_ID_EMPTY' => new self($rpc, 'Random ID empty.', $code, $caller, $previous),
+            'RANDOM_ID_EXPIRED' => new self($rpc, 'The specified `random_id` was expired (most likely it didn\'t follow the required `uint64_t random_id = (time() << 32) | ((uint64_t)random_uint32_t())` format, or the specified time is too far in the past).', $code, $caller, $previous),
             'RANDOM_ID_INVALID' => new self($rpc, 'A provided random ID is invalid.', $code, $caller, $previous),
             'RANDOM_LENGTH_INVALID' => new self($rpc, 'Random length invalid.', $code, $caller, $previous),
             'RANGES_INVALID' => new self($rpc, 'Invalid range provided.', $code, $caller, $previous),
             'REACTION_EMPTY' => new self($rpc, 'Empty reaction provided.', $code, $caller, $previous),
             'REACTION_INVALID' => new self($rpc, 'The specified reaction is invalid.', $code, $caller, $previous),
+            'REACTIONS_COUNT_INVALID' => new self($rpc, 'The specified number of reactions is invalid.', $code, $caller, $previous),
             'REACTIONS_TOO_MANY' => new self($rpc, 'The message already has exactly `reactions_uniq_max` reaction emojis, you can\'t react with a new emoji, see [the docs for more info &raquo;](https://core.telegram.org/api/config#client-configuration).', $code, $caller, $previous),
             'RECEIPT_EMPTY' => new self($rpc, 'The specified receipt is empty.', $code, $caller, $previous),
             'REPLY_MARKUP_BUY_EMPTY' => new self($rpc, 'Reply markup for buy button empty.', $code, $caller, $previous),
@@ -609,6 +648,7 @@ class RPCErrorException extends \Exception
             'REPLY_MESSAGE_ID_INVALID' => new self($rpc, 'The specified reply-to message ID is invalid.', $code, $caller, $previous),
             'REPLY_MESSAGES_TOO_MUCH' => new \danog\MadelineProto\RPCError\ReplyMessagesTooMuchError($code, $caller, $previous),
             'REPLY_TO_INVALID' => new self($rpc, 'The specified `reply_to` field is invalid.', $code, $caller, $previous),
+            'REPLY_TO_MONOFORUM_PEER_INVALID' => new self($rpc, 'The specified inputReplyToMonoForum.monoforum_peer_id is invalid.', $code, $caller, $previous),
             'REPLY_TO_USER_INVALID' => new self($rpc, 'The replied-to user is invalid.', $code, $caller, $previous),
             'REQUEST_TOKEN_INVALID' => new \danog\MadelineProto\RPCError\RequestTokenInvalidError($code, $caller, $previous),
             'RESET_REQUEST_MISSING' => new self($rpc, 'No password reset is in progress.', $code, $caller, $previous),
@@ -622,6 +662,7 @@ class RPCErrorException extends \Exception
             'RINGTONE_INVALID' => new self($rpc, 'The specified ringtone is invalid.', $code, $caller, $previous),
             'RINGTONE_MIME_INVALID' => new self($rpc, 'The MIME type for the ringtone is invalid.', $code, $caller, $previous),
             'RSA_DECRYPT_FAILED' => new self($rpc, 'Internal RSA decryption failed.', $code, $caller, $previous),
+            'SAVED_ID_EMPTY' => new self($rpc, 'The passed inputSavedStarGiftChat.saved_id is empty.', $code, $caller, $previous),
             'SCHEDULE_BOT_NOT_ALLOWED' => new \danog\MadelineProto\RPCError\ScheduleBotNotAllowedError($code, $caller, $previous),
             'SCHEDULE_DATE_INVALID' => new self($rpc, 'Invalid schedule date provided.', $code, $caller, $previous),
             'SCHEDULE_DATE_TOO_LATE' => new \danog\MadelineProto\RPCError\ScheduleDateTooLateError($code, $caller, $previous),
@@ -632,7 +673,9 @@ class RPCErrorException extends \Exception
             'SEARCH_WITH_LINK_NOT_SUPPORTED' => new self($rpc, 'You cannot provide a search query and an invite link at the same time.', $code, $caller, $previous),
             'SECONDS_INVALID' => new self($rpc, 'Invalid duration provided.', $code, $caller, $previous),
             'SECURE_SECRET_REQUIRED' => new self($rpc, 'A secure secret is required.', $code, $caller, $previous),
+            'SELF_DELETE_RESTRICTED' => new self($rpc, 'Business bots can\'t delete messages just for the user, `revoke` **must** be set.', $code, $caller, $previous),
             'SEND_AS_PEER_INVALID' => new self($rpc, 'You can\'t send messages as the specified peer.', $code, $caller, $previous),
+            'SEND_MESSAGE_GAME_INVALID' => new self($rpc, 'An inputBotInlineMessageGame can only be contained in an inputBotInlineResultGame, not in an inputBotInlineResult/inputBotInlineResultPhoto/etc.', $code, $caller, $previous),
             'SEND_MESSAGE_MEDIA_INVALID' => new self($rpc, 'Invalid media provided.', $code, $caller, $previous),
             'SEND_MESSAGE_TYPE_INVALID' => new self($rpc, 'The message type is invalid.', $code, $caller, $previous),
             'SETTINGS_INVALID' => new self($rpc, 'Invalid settings were provided.', $code, $caller, $previous),
@@ -648,13 +691,24 @@ class RPCErrorException extends \Exception
             'SRP_A_INVALID' => new self($rpc, 'The specified inputCheckPasswordSRP.A value is invalid.', $code, $caller, $previous),
             'SRP_ID_INVALID' => new self($rpc, 'Invalid SRP ID provided.', $code, $caller, $previous),
             'SRP_PASSWORD_CHANGED' => new self($rpc, 'Password has changed.', $code, $caller, $previous),
-            'STARGIFT_INVALID' => new self($rpc, 'The passed [inputInvoiceStarGift](https://core.telegram.org/constructor/inputInvoiceStarGift) is invalid.', $code, $caller, $previous),
+            'STARGIFT_ALREADY_CONVERTED' => new self($rpc, 'The specified star gift was already converted to Stars.', $code, $caller, $previous),
+            'STARGIFT_ALREADY_REFUNDED' => new self($rpc, 'The specified star gift was already refunded.', $code, $caller, $previous),
+            'STARGIFT_ALREADY_UPGRADED' => new self($rpc, 'The specified gift was already upgraded to a collectible gift.', $code, $caller, $previous),
+            'STARGIFT_INVALID' => new self($rpc, 'The passed gift is invalid.', $code, $caller, $previous),
+            'STARGIFT_NOT_FOUND' => new self($rpc, 'The specified gift was not found.', $code, $caller, $previous),
+            'STARGIFT_OWNER_INVALID' => new self($rpc, 'You cannot transfer or sell a gift owned by another user.', $code, $caller, $previous),
+            'STARGIFT_PEER_INVALID' => new self($rpc, 'The specified inputSavedStarGiftChat.peer is invalid.', $code, $caller, $previous),
+            'STARGIFT_RESELL_CURRENCY_NOT_ALLOWED' => new self($rpc, 'You can\'t buy the gift using the specified currency (i.e. trying to pay in Stars for TON gifts).', $code, $caller, $previous),
+            'STARGIFT_SLUG_INVALID' => new self($rpc, 'The specified gift slug is invalid.', $code, $caller, $previous),
+            'STARGIFT_UPGRADE_UNAVAILABLE' => new self($rpc, 'A received gift can only be upgraded to a collectible gift if the [messageActionStarGift](https://core.telegram.org/constructor/messageActionStarGift)/[savedStarGift](https://core.telegram.org/constructor/savedStarGift).`can_upgrade` flag is set.', $code, $caller, $previous),
             'STARGIFT_USAGE_LIMITED' => new self($rpc, 'The gift is sold out.', $code, $caller, $previous),
+            'STARGIFT_USER_USAGE_LIMITED' => new self($rpc, 'You\'ve reached the starGift.limited_per_user limit, you can\'t buy any more gifts of this type.', $code, $caller, $previous),
             'STARREF_AWAITING_END' => new self($rpc, 'The previous referral program was terminated less than 24 hours ago: further changes can be made after the date specified in userFull.starref_program.end_date.', $code, $caller, $previous),
             'STARREF_EXPIRED' => new self($rpc, 'The specified referral link is invalid.', $code, $caller, $previous),
             'STARREF_HASH_REVOKED' => new self($rpc, 'The specified affiliate link was already revoked.', $code, $caller, $previous),
             'STARREF_PERMILLE_INVALID' => new self($rpc, 'The specified commission_permille is invalid: the minimum and maximum values for this parameter are contained in the [starref_min_commission_permille](https://core.telegram.org/api/config#starref-min-commission-permille) and [starref_max_commission_permille](https://core.telegram.org/api/config#starref-max-commission-permille) client configuration parameters.', $code, $caller, $previous),
             'STARREF_PERMILLE_TOO_LOW' => new self($rpc, 'The specified commission_permille is too low: the minimum and maximum values for this parameter are contained in the [starref_min_commission_permille](https://core.telegram.org/api/config#starref-min-commission-permille) and [starref_max_commission_permille](https://core.telegram.org/api/config#starref-max-commission-permille) client configuration parameters.', $code, $caller, $previous),
+            'STARS_AMOUNT_INVALID' => new self($rpc, 'The specified amount in stars is invalid.', $code, $caller, $previous),
             'STARS_INVOICE_INVALID' => new self($rpc, 'The specified Telegram Star invoice is invalid.', $code, $caller, $previous),
             'STARS_PAYMENT_REQUIRED' => new self($rpc, 'To import this chat invite link, you must first [pay for the associated Telegram Star subscription &raquo;](https://core.telegram.org/api/subscriptions#channel-subscriptions).', $code, $caller, $previous),
             'START_PARAM_EMPTY' => new self($rpc, 'The start parameter is empty.', $code, $caller, $previous),
@@ -687,7 +741,10 @@ class RPCErrorException extends \Exception
             'STORY_NOT_MODIFIED' => new self($rpc, 'The new story information you passed is equal to the previous story information, thus it wasn\'t modified.', $code, $caller, $previous),
             'STORY_PERIOD_INVALID' => new self($rpc, 'The specified story period is invalid for this account.', $code, $caller, $previous),
             'SUBSCRIPTION_EXPORT_MISSING' => new \danog\MadelineProto\RPCError\SubscriptionExportMissingError($code, $caller, $previous),
+            'SUBSCRIPTION_ID_INVALID' => new self($rpc, 'The specified subscription_id is invalid.', $code, $caller, $previous),
             'SUBSCRIPTION_PERIOD_INVALID' => new self($rpc, 'The specified subscription_pricing.period is invalid.', $code, $caller, $previous),
+            'SUGGESTED_POST_AMOUNT_INVALID' => new self($rpc, 'The specified price for the suggested post is invalid.', $code, $caller, $previous),
+            'SUGGESTED_POST_PEER_INVALID' => new self($rpc, 'You cannot send suggested posts to non-[monoforum](https://core.telegram.org/api/monoforum) peers.', $code, $caller, $previous),
             'SWITCH_PM_TEXT_EMPTY' => new self($rpc, 'The switch_pm.text field was empty.', $code, $caller, $previous),
             'SWITCH_WEBVIEW_URL_INVALID' => new self($rpc, 'The URL specified in switch_webview.url is invalid!', $code, $caller, $previous),
             'TAKEOUT_INVALID' => new self($rpc, 'The specified takeout ID is invalid.', $code, $caller, $previous),
@@ -701,12 +758,17 @@ class RPCErrorException extends \Exception
             'THEME_INVALID' => new self($rpc, 'Invalid theme provided.', $code, $caller, $previous),
             'THEME_MIME_INVALID' => new self($rpc, 'The theme\'s MIME type is invalid.', $code, $caller, $previous),
             'THEME_PARAMS_INVALID' => new self($rpc, 'The specified `theme_params` field is invalid.', $code, $caller, $previous),
+            'THEME_SLUG_INVALID' => new self($rpc, 'The specified theme slug is invalid.', $code, $caller, $previous),
             'THEME_TITLE_INVALID' => new self($rpc, 'The specified theme title is invalid.', $code, $caller, $previous),
             'TIMEZONE_INVALID' => new self($rpc, 'The specified timezone does not exist.', $code, $caller, $previous),
             'TITLE_INVALID' => new self($rpc, 'The specified stickerpack title is invalid.', $code, $caller, $previous),
             'TMP_PASSWORD_DISABLED' => new self($rpc, 'The temporary password is disabled.', $code, $caller, $previous),
             'TMP_PASSWORD_INVALID' => new self($rpc, 'The passed tmp_password is invalid.', $code, $caller, $previous),
+            'TO_ID_INVALID' => new self($rpc, 'The specified `to_id` of the passed inputInvoiceStarGiftResale or inputInvoiceStarGiftTransfer is invalid.', $code, $caller, $previous),
             'TO_LANG_INVALID' => new self($rpc, 'The specified destination language is invalid.', $code, $caller, $previous),
+            'TODO_ITEM_DUPLICATE' => new \danog\MadelineProto\RPCError\TodoItemDuplicateError($code, $caller, $previous),
+            'TODO_ITEMS_EMPTY' => new self($rpc, 'A checklist was specified, but no [checklist items](https://core.telegram.org/api/todo) were passed.', $code, $caller, $previous),
+            'TODO_NOT_MODIFIED' => new self($rpc, 'No todo items were specified, so no changes were made to the todo list.', $code, $caller, $previous),
             'TOKEN_EMPTY' => new self($rpc, 'The specified token is empty.', $code, $caller, $previous),
             'TOKEN_INVALID' => new self($rpc, 'The provided token is invalid.', $code, $caller, $previous),
             'TOKEN_TYPE_INVALID' => new self($rpc, 'The specified token type is invalid.', $code, $caller, $previous),
@@ -725,6 +787,7 @@ class RPCErrorException extends \Exception
             'TTL_MEDIA_INVALID' => new self($rpc, 'Invalid media Time To Live was provided.', $code, $caller, $previous),
             'TTL_PERIOD_INVALID' => new self($rpc, 'The specified TTL period is invalid.', $code, $caller, $previous),
             'TYPES_EMPTY' => new self($rpc, 'No top peer type was provided.', $code, $caller, $previous),
+            'UNSUPPORTED' => new self($rpc, '`require_payment` cannot be *set* by users, only by monoforums: users must instead use the [inputPrivacyKeyNoPaidMessages](https://core.telegram.org/constructor/inputPrivacyKeyNoPaidMessages) privacy setting to remove a previously added exemption.', $code, $caller, $previous),
             'UNTIL_DATE_INVALID' => new self($rpc, 'Invalid until date provided.', $code, $caller, $previous),
             'URL_INVALID' => new self($rpc, 'Invalid URL provided.', $code, $caller, $previous),
             'USAGE_LIMIT_INVALID' => new self($rpc, 'The specified usage limit is invalid.', $code, $caller, $previous),
@@ -796,22 +859,30 @@ class RPCErrorException extends \Exception
             'INPUT_REQUEST_TOO_LONG' => new self($rpc, 'The request payload is too long.', $code, $caller, $previous),
             'PEER_FLOOD' => new self($rpc, 'The current account is spamreported, you cannot execute this action, check @spambot for more info.', $code, $caller, $previous),
             'STICKERSET_NOT_MODIFIED' => new self($rpc, 'The passed stickerset information is equal to the current information.', $code, $caller, $previous),
+            'ALLOW_PAYMENT_REQUIRED' => new \danog\MadelineProto\RPCError\AllowPaymentRequiredError($code, $caller, $previous),
+            'API_GIFT_RESTRICTED_UPDATE_APP' => new self($rpc, 'Please update the app to access the gift API.', $code, $caller, $previous),
             'BUSINESS_ADDRESS_ACTIVE' => new self($rpc, 'The user is currently advertising a [Business Location](https://core.telegram.org/api/business#location), the location may only be changed (or removed) using [account.updateBusinessLocation &raquo;](https://core.telegram.org/method/account.updateBusinessLocation).  .', $code, $caller, $previous),
             'CALL_PROTOCOL_COMPAT_LAYER_INVALID' => new self($rpc, 'The other side of the call does not support any of the VoIP protocols supported by the local client, as specified by the `protocol.layer` and `protocol.library_versions` fields.', $code, $caller, $previous),
-            'FILEREF_UPGRADE_NEEDED' => new self($rpc, 'The client has to be updated in order to support [file references](https://core.telegram.org/api/file_reference).', $code, $caller, $previous),
+            'FILEREF_UPGRADE_NEEDED' => new self($rpc, 'The client has to be updated in order to support [file references](https://core.telegram.org/api/file-references).', $code, $caller, $previous),
             'FRESH_CHANGE_PHONE_FORBIDDEN' => new self($rpc, 'You can\'t change phone number right after logging in, please wait at least 24 hours.', $code, $caller, $previous),
             'FRESH_RESET_AUTHORISATION_FORBIDDEN' => new self($rpc, 'You can\'t logout other sessions if less than 24 hours have passed since you logged on the current session.', $code, $caller, $previous),
             'PAYMENT_UNSUPPORTED' => new \danog\MadelineProto\RPCError\PaymentUnsupportedError($code, $caller, $previous),
             'PHONE_PASSWORD_FLOOD' => new self($rpc, 'You have tried logging in too many times.', $code, $caller, $previous),
+            'PRECHECKOUT_FAILED' => new self($rpc, 'Precheckout failed, a detailed and localized description for the error will be emitted via an [updateServiceNotification as specified here &raquo;](https://core.telegram.org/api/errors#406-not-acceptable).', $code, $caller, $previous),
             'PREMIUM_CURRENTLY_UNAVAILABLE' => new self($rpc, 'You cannot currently purchase a Premium subscription.', $code, $caller, $previous),
             'PRIVACY_PREMIUM_REQUIRED' => new \danog\MadelineProto\RPCError\PrivacyPremiumRequiredError($code, $caller, $previous),
             'SEND_CODE_UNAVAILABLE' => new self($rpc, 'Returned when all available options for this type of number were already used (e.g. flash-call, then SMS, then this error might be returned to trigger a second resend).', $code, $caller, $previous),
+            'STARGIFT_EXPORT_IN_PROGRESS' => new self($rpc, 'A gift export is in progress, a detailed and localized description for the error will be emitted via an [updateServiceNotification as specified here &raquo;](https://core.telegram.org/api/errors#406-not-acceptable).', $code, $caller, $previous),
+            'STARS_FORM_AMOUNT_MISMATCH' => new self($rpc, 'The form amount has changed, please fetch the new form using [payments.getPaymentForm](https://core.telegram.org/method/payments.getPaymentForm) and restart the process.', $code, $caller, $previous),
             'STICKERSET_OWNER_ANONYMOUS' => new self($rpc, 'Provided stickerset can\'t be installed as group stickerset to prevent admin deanonymization.', $code, $caller, $previous),
+            'TRANSLATIONS_DISABLED' => new self($rpc, 'Translations are unavailable, a detailed and localized description for the error will be emitted via an [updateServiceNotification as specified here &raquo;](https://core.telegram.org/api/errors#406-not-acceptable).', $code, $caller, $previous),
             'UPDATE_APP_TO_LOGIN' => new self($rpc, 'Please update to the latest version of MadelineProto to login.', $code, $caller, $previous),
             'USER_RESTRICTED' => new self($rpc, 'You\'re spamreported, you can\'t create channels or chats.', $code, $caller, $previous),
             'USERPIC_PRIVACY_REQUIRED' => new self($rpc, 'You need to disable privacy settings for your profile picture in order to make your geolocation public.', $code, $caller, $previous),
             'AUTH_KEY_DUPLICATED' => new self($rpc, 'Concurrent usage of the current session from multiple connections was detected, the current session was invalidated by the server for security reasons!', $code, $caller, $previous),
             'ANONYMOUS_REACTIONS_DISABLED' => new self($rpc, 'Sorry, anonymous administrators cannot leave reactions or participate in polls.', $code, $caller, $previous),
+            'BOT_ACCESS_FORBIDDEN' => new self($rpc, 'The specified method *can* be used over a [business connection](https://core.telegram.org/api/bots/connected-business-bots) for some operations, but the specified query attempted an operation that is not allowed over a business connection.', $code, $caller, $previous),
+            'BOT_VERIFIER_FORBIDDEN' => new self($rpc, 'This bot cannot assign [verification icons](https://core.telegram.org/api/bots/verification).', $code, $caller, $previous),
             'BROADCAST_FORBIDDEN' => new self($rpc, 'Channel poll voters and reactions cannot be fetched to prevent deanonymization.', $code, $caller, $previous),
             'CHANNEL_PUBLIC_GROUP_NA' => new self($rpc, 'channel/supergroup not available.', $code, $caller, $previous),
             'CHAT_ACTION_FORBIDDEN' => new self($rpc, 'You cannot execute this action.', $code, $caller, $previous),
@@ -842,12 +913,13 @@ class RPCErrorException extends \Exception
             'RIGHT_FORBIDDEN' => new self($rpc, 'Your admin rights do not allow you to do this.', $code, $caller, $previous),
             'SENSITIVE_CHANGE_FORBIDDEN' => new self($rpc, 'You can\'t change your sensitive content settings.', $code, $caller, $previous),
             'USER_DELETED' => new self($rpc, 'You can\'t send this secret message because the other participant deleted their account.', $code, $caller, $previous),
+            'USER_PERMISSION_DENIED' => new self($rpc, 'The user hasn\'t granted or has revoked the bot\'s access to change their emoji status using [bots.toggleUserEmojiStatusPermission](https://core.telegram.org/method/bots.toggleUserEmojiStatusPermission).', $code, $caller, $previous),
             'USER_PRIVACY_RESTRICTED' => new self($rpc, 'The user\'s privacy settings do not allow you to do this.', $code, $caller, $previous),
             'YOUR_PRIVACY_RESTRICTED' => new self($rpc, 'You cannot fetch the read date of this message because you have disallowed other users to do so for *your* messages; to fix, allow other users to see *your* exact last online date OR purchase a [Telegram Premium](https://core.telegram.org/api/premium) subscription.', $code, $caller, $previous),
             'CHAT_FORBIDDEN' => new \danog\MadelineProto\RPCError\ChatForbiddenError($code, $caller, $previous),
+            'AUTH_KEY_UNREGISTERED' => new self($rpc, 'The specified authorization key is not registered in the system (for example, a PFS temporary key has expired).', $code, $caller, $previous),
             'AUTH_KEY_INVALID' => new self($rpc, 'The specified auth key is invalid.', $code, $caller, $previous),
             'AUTH_KEY_PERM_EMPTY' => new self($rpc, 'The method is unavailable for temporary authorization keys, not bound to a permanent authorization key.', $code, $caller, $previous),
-            'AUTH_KEY_UNREGISTERED' => new self($rpc, 'The specified authorization key is not registered in the system (for example, a PFS temporary key has expired).', $code, $caller, $previous),
             'SESSION_EXPIRED' => new self($rpc, 'The session has expired.', $code, $caller, $previous),
             'SESSION_PASSWORD_NEEDED' => new \danog\MadelineProto\RPCError\SessionPasswordNeededError($code, $caller, $previous),
             'SESSION_REVOKED' => new self($rpc, 'The session was revoked by the user.', $code, $caller, $previous),

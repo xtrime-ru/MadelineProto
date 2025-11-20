@@ -1397,6 +1397,11 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             $this->setupLogger();
         }
 
+        if ($this->settings->getSchema()->getFuzzMode()) {
+            RPCErrorException::$errorMethodMap = [];
+            RPCErrorException::$descriptions = [];
+        }
+
         if ($this->settings->getDb()->hasChanged()) {
             $this->logger->logger("The database settings have changed!", Logger::WARNING);
             $this->cleanupProperties();
@@ -1603,6 +1608,9 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      */
     public function isSelfBot(): bool
     {
+        if ($this->loginState->getState()->state !== API::LOGGED_IN) {
+            throw new Exception('Not logged in!');
+        }
         return $this->authorization['user']['bot'];
     }
     /**

@@ -677,7 +677,7 @@ trait UpdateHandler
                     $this,
                     $message,
                     $info,
-                    $message['action']['emoticon'],
+                    $message['action']['theme'],
                 ),
                 'messageActionWebViewDataSentMe' => new DialogWebView(
                     $this,

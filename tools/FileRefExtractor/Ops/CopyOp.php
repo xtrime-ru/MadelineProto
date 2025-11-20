@@ -18,43 +18,45 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
+use danog\MadelineProto\FileRefExtractor\FieldTransformationOp;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use danog\MadelineProto\FileRefExtractor\TypedOp;
-use Webmozart\Assert\Assert;
 
-final readonly class CopyOp extends FieldExtractorOp
+final readonly class CopyOp implements FieldTransformationOp
 {
-    public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
-    {
-        $new = [];
-        foreach ($this->path as $i => $part) {
-            if ($ignoreFlag && \array_key_exists(2, $part) && \is_int($part[2]) && ($part[2] & CopyOp::FLAG_IF_ABSENT_ABORT)) {
-                return null;
-            }
-            if (isset($part[2]) && $part[2] instanceof TypedOp) {
-                $n = $part[2]->normalize($stack, $current, $ignoreFlag);
-                if ($n === null) {
-                    return null;
-                }
-                $part[2] = $n;
-            }
-            $new[$i] = $part;
-        }
-        Assert::eq($current, $this->path[0][0]);
-        return new self(
-            [...$stack, ...$new],
-        );
+    private Path $path;
+    /** @param Path|list<list{0: string, 1: string, 2?: int-mask-of<self::FLAG_*>|TypedOp}> $path */
+    public function __construct(
+        array|Path $path,
+    ) {
+        $this->path = $path instanceof Path ? $path : new Path($path);
     }
 
+    public function getType(TLContext $tl): string
+    {
+        return $this->path->getType($tl);
+    }
+
+    public function normalize(array $stack, string $current, bool $ignoreFlag): ?TypedOp
+    {
+        $path = $this->path->normalize($stack, $current, $ignoreFlag);
+        if ($path === null) {
+            return null;
+        }
+        if ($path !== $this->path) {
+            return new self($path);
+        }
+        return $this;
+    }
     public function build(TLContext $tl): array
     {
         return [
             '_' => 'typedOp',
-            'type' => $this->getType($tl),
+            'type' => $this->path->getType($tl),
             'op' => [
                 '_' => 'copyOp',
-                'path' => $this->buildPath($tl),
+                'from' => $this->path->buildPath($tl, 'extractAndStore'),
             ],
         ];
     }

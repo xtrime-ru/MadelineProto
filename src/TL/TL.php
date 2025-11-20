@@ -616,6 +616,8 @@ final class TL implements TLInterface
         }
         if ($type['type'] === 'InputMessage' && !\is_array($object)) {
             $object = ['_' => 'inputMessageID', 'id' => $object];
+        } elseif ($type['type'] === 'TextWithEntities' && !\is_array($object)) {
+            $object = ['_' => 'textWithEntities', 'text' => $object];
         } elseif (isset($this->typeMismatch[$type['type']]) && (!\is_array($object) || isset($object['_']) && $this->constructors->findByPredicate($object['_'])['type'] !== $type['type'])) {
             $object = $this->typeMismatch[$type['type']]($object);
             if (!isset($object['_'])) {
@@ -1090,6 +1092,11 @@ final class TL implements TLInterface
             $x['id'] = $x['id'] > Magic::MAX_CHANNEL_ID
                 ? DialogId::fromMonoforumId($x['id'])
                 : DialogId::fromSupergroupOrChannelId($x['id']);
+            if (isset($x['linked_monoforum_id'])) {
+                $x['linked_monoforum_id'] = $x['linked_monoforum_id'] > Magic::MAX_CHANNEL_ID
+                    ? DialogId::fromMonoforumId($x['linked_monoforum_id'])
+                    : DialogId::fromSupergroupOrChannelId($x['linked_monoforum_id']);
+            }
         } elseif ($x['_'] === 'chat'
             || $x['_'] === 'chatForbidden'
             || $x['_'] === 'chatFull'

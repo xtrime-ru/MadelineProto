@@ -18,15 +18,16 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
 use danog\MadelineProto\FileRefExtractor\FieldTransformationOp;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use Webmozart\Assert\Assert;
 
 final readonly class GetInputPeerOp implements FieldTransformationOp
 {
-    public function __construct(private readonly FieldExtractorOp $path)
-    {
+    public function __construct(
+        private Path $path,
+    ) {
     }
 
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
@@ -49,15 +50,23 @@ final readonly class GetInputPeerOp implements FieldTransformationOp
     {
         $type = $this->path->getType($tl);
         if ($type === 'InputPeer') {
-            return $this->path->build($tl);
+            return [
+                '_' => 'typedOp',
+                'type' => $this->getType($tl),
+                'op' => [
+                    '_' => 'getInputPeerByIdOp',
+                    'from' => $this->path->buildPath($tl, 'extractPeerIdFromInputPeerAndStore'),
+                ],
+            ];
         }
         Assert::eq($type, 'Peer', "Expected type 'Peer' at position {$this->path->path[0][0]} but got '$type'");
+
         return [
             '_' => 'typedOp',
             'type' => $this->getType($tl),
             'op' => [
-                '_' => 'getInputPeerOp',
-                'path' => $this->path->build($tl),
+                '_' => 'getInputPeerByIdOp',
+                'from' => $this->path->buildPath($tl, 'extractPeerIdFromPeerAndStore'),
             ],
         ];
     }

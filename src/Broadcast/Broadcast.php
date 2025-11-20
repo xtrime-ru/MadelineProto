@@ -131,7 +131,7 @@ trait Broadcast
      */
     public function getBroadcastProgress(int $id): ?Progress
     {
-        return $this->broadcasts[$id]?->getProgress();
+        return ($this->broadcasts[$id] ?? null)?->getProgress();
     }
     /**
      * Cancel a running broadcast.

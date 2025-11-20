@@ -19,13 +19,13 @@ declare(strict_types=1);
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
 use danog\MadelineProto\FileRefExtractor\ActionOp;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use Webmozart\Assert\Assert;
 
 final readonly class CopyMethodCallOp implements ActionOp
 {
-    public function __construct(private readonly string $method)
+    public function __construct(private readonly string $method, private readonly string $stored_constructor)
     {
     }
 
@@ -40,23 +40,27 @@ final readonly class CopyMethodCallOp implements ActionOp
     {
         Assert::eq($tl->position, $this->method, "Current constructor {$tl->position} does not match expected method {$this->method}");
         $method = $tl->tl->tl->getMethods()->findByMethod($this->method);
-        $out = $tl->buildMode;
-        if ($out instanceof Ast) {
-            $args = [];
-            foreach ($method['params'] as $arg) {
-                if (isset($arg['pow'])) {
-                    $args[$arg['name']] = new CopyOp([[$this->method, $arg['name'], CopyOp::FLAG_PASSTHROUGH]]);
+        $args = [];
+        foreach ($method['params'] as $arg) {
+            if (isset($arg['pow'])) {
+                $args[$arg['name']] = new CopyOp([[$this->method, $arg['name'], Path::FLAG_PASSTHROUGH]]);
+            } else {
+                if ($arg['type'] === 'InputPeer') {
+                    $args[$arg['name']] = new GetInputPeerOp(new Path([[$this->method, $arg['name']]]));
+                } elseif ($arg['type'] === 'InputUser') {
+                    $args[$arg['name']] = new GetInputUserOp(new Path([[$this->method, $arg['name']]]));
                 } else {
                     $args[$arg['name']] = new CopyOp([[$this->method, $arg['name']]]);
                 }
             }
-            $result = new CallOp(
-                $this->method,
-                $args
-            );
-
-            $result->build($tl);
         }
+        $result = new CallOp(
+            $this->method,
+            $args,
+            $this->stored_constructor
+        );
+        $result = $result->normalize([], $this->method, false);
 
+        $result->build($tl);
     }
 }

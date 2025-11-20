@@ -36,6 +36,7 @@ use Countable;
 use danog\DialogId\DialogId;
 use Fiber;
 use PhpParser\Node\Arg;
+use PhpParser\Node\DeclareItem;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\Include_;
 use PhpParser\Node\Expr\New_;
@@ -48,7 +49,6 @@ use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassLike;
 use PhpParser\Node\Stmt\ClassMethod;
-use PhpParser\Node\Stmt\DeclareDeclare;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\NameResolver;
@@ -746,8 +746,8 @@ abstract class Tools extends AsyncTools
             }
         }
 
-        /** @var DeclareDeclare|null $declare */
-        $declare = $finder->findFirstInstanceOf($code, DeclareDeclare::class);
+        /** @var DeclareItem|null $declare */
+        $declare = $finder->findFirstInstanceOf($code, DeclareItem::class);
         if ($declare === null
             || $declare->key->name !== 'strict_types'
             || !$declare->value instanceof LNumber

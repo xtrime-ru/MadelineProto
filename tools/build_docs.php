@@ -111,6 +111,7 @@ foreach ($errors['result'] as $code => $sub) {
             && !str_contains($err, 'INVALID')
             && !str_contains($err, 'TOO_LONG')
             && !str_contains($err, '_EMPTY')
+            && $err !== 'AUTH_KEY_UNREGISTERED'
         ) {
             $whitelist[$class] = true;
         }

@@ -1,8 +1,7 @@
-<?php
-
-declare(strict_types=1);
-
+<?php declare(strict_types=1);
 /**
+ * ChannelMonoforumUnsupportedError error.
+ *
  * This file is part of MadelineProto.
  * MadelineProto is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
  * MadelineProto is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -16,20 +15,21 @@ declare(strict_types=1);
  * @link https://docs.madelineproto.xyz MadelineProto documentation
  */
 
-namespace danog\MadelineProto\FileRefExtractor\BuildMode;
+namespace danog\MadelineProto\RPCError;
 
-use danog\MadelineProto\FileRefExtractor\BuildMode;
+use danog\MadelineProto\RPCErrorException;
 
-final class Flat implements BuildMode
+/**
+ * [Monoforums](https://core.telegram.org/api/channel#monoforums) do not support this feature.
+ *
+ * Note: this exception is part of the raw API, and thus is not covered by the backwards-compatibility promise.
+ *
+ * Always check the changelog when upgrading, and use tools like Psalm to easily upgrade your code.
+ */
+final class ChannelMonoforumUnsupportedError extends RPCErrorException
 {
-    public array $actionsPre = [];
-    public array $actionsPost = [];
-    public array $backrefs = [];
-    public string $contextName;
-
-    public function cleanup(): void
+    protected function __construct(int $code, string $caller, ?\Exception $previous = null)
     {
-        $this->actionsPre = [];
-        $this->actionsPost = [];
+        parent::__construct('CHANNEL_MONOFORUM_UNSUPPORTED', '[Monoforums](https://core.telegram.org/api/channel#monoforums) do not support this feature.', $code, $caller, $previous);
     }
 }

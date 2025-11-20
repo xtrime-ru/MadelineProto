@@ -647,6 +647,9 @@ trait Files
      */
     public function getFileInfo(mixed $constructor): array
     {
+        if ($constructor instanceof Message) {
+            $constructor = $constructor->media;
+        }
         if ($constructor instanceof Media) {
             $constructor = $constructor->botApiFileId;
         }

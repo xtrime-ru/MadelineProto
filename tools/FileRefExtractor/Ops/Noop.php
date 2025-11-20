@@ -19,7 +19,6 @@ declare(strict_types=1);
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
 use danog\MadelineProto\FileRefExtractor\ActionOp;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 
 final readonly class Noop implements ActionOp
@@ -35,11 +34,9 @@ final readonly class Noop implements ActionOp
 
     public function build(TLContext $tl): void
     {
-        if ($tl->buildMode instanceof Ast) {
-            $tl->buildMode->addNode(
-                $tl,
-                why: $this->why,
-            );
-        }
+        $tl->buildMode->addNode(
+            $tl,
+            why: $this->why,
+        );
     }
 }

@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 /**
- * FileReferenceExpiredError error.
+ * BalanceTooLowError error.
  *
  * This file is part of MadelineProto.
  * MadelineProto is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
@@ -20,16 +20,16 @@ namespace danog\MadelineProto\RPCError;
 use danog\MadelineProto\RPCErrorException;
 
 /**
- * File reference expired, it must be refetched as described in [the documentation](https://core.telegram.org/api/file-references).
+ * The transaction cannot be completed because the current [Telegram Stars balance](https://core.telegram.org/api/stars) is too low.
  *
  * Note: this exception is part of the raw API, and thus is not covered by the backwards-compatibility promise.
  *
  * Always check the changelog when upgrading, and use tools like Psalm to easily upgrade your code.
  */
-final class FileReferenceExpiredError extends RPCErrorException
+final class BalanceTooLowError extends RPCErrorException
 {
     protected function __construct(int $code, string $caller, ?\Exception $previous = null)
     {
-        parent::__construct('FILE_REFERENCE_EXPIRED', 'File reference expired, it must be refetched as described in [the documentation](https://core.telegram.org/api/file-references).', $code, $caller, $previous);
+        parent::__construct('BALANCE_TOO_LOW', 'The transaction cannot be completed because the current [Telegram Stars balance](https://core.telegram.org/api/stars) is too low.', $code, $caller, $previous);
     }
 }

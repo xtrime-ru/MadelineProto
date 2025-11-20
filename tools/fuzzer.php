@@ -1,8 +1,12 @@
 <?php declare(strict_types=1);
 
+use Amp\Http\Client\HttpClientBuilder;
+use Amp\Http\Client\Request;
 use danog\MadelineProto\API;
 use danog\MadelineProto\Logger;
+use danog\MadelineProto\Magic;
 use danog\MadelineProto\PTSException;
+use danog\MadelineProto\RPCError\BusinessConnectionNotAllowedError;
 use danog\MadelineProto\RPCErrorException;
 use danog\MadelineProto\Settings;
 use danog\MadelineProto\Settings\Logger as SettingsLogger;
@@ -58,9 +62,37 @@ $schema = getTLSchema();
 $layer = getTL($schema);
 $res = '';
 
+Magic::start(true);
+$auth = '';
+try {
+    $auth = getenv('TELERPC_AUTH_TOKEN') ?: '';
+} catch (Throwable) {
+}
+Assert::true(preg_match('/^[a-zA-Z0-9_-]*$/', $auth) === 1, 'TELERPC_AUTH_TOKEN can only contain a-z, A-Z, 0-9, _ and -');
+
+$client = HttpClientBuilder::buildDefault();
+if ($auth) {
+    $res = json_decode(
+        (
+            $client
+                ->request(new Request('https://report-rpc-error.madelineproto.xyz/?auth='.$auth.'&cleanup=1'))
+        )->getBody()->buffer(),
+        true,
+    );
+    Assert::true($res['ok']);
+    echo "Cleaned up old reports".PHP_EOL;
+} else {
+    echo "No TELERPC_AUTH_TOKEN set, not cleaning up old reports".PHP_EOL;
+}
+
 $settings = new Settings;
 $settings->setSchema($schema);
 $settings->getLogger()->setLevel(Logger::ULTRA_VERBOSE);
+
+$unauthed = new \danog\MadelineProto\API('fuzz_unauth.madeline');
+$unauthed->updateSettings($settings);
+Assert::false($unauthed->getSelf(), "fuzz_unauth.madeline is authed!");
+$unauthed->restart();
 
 echo "Bot login:".PHP_EOL;
 $bot = new \danog\MadelineProto\API('fuzz_bot.madeline');
@@ -78,56 +110,61 @@ $user->updateSettings($settings);
 Assert::true($user->isSelfUser(), "fuzz_user.madeline is not a user!");
 $user->restart();
 
-Tools::sleep(1.0);
-
 $user->getSelf();
 $bot->getSelf();
-$bot->getUpdates();
 
-Logger::log("Initializing business connection...");
-$rights = ['_' => 'businessBotRights'];
-foreach ($user->getTL()->getConstructors()->findByPredicate('businessBotRights')['params'] as $param) {
-    if ($param['type'] === 'true') {
-        $rights[$param['name']] = true;
-    }
-}
-
-foreach ([true, false] as $deleted) {
-    $user->account->updateConnectedBot(
-        bot: $bot->getSelf()['username'],
-        deleted: $deleted,
-        rights: $rights,
-        recipients: [
-            '_' => 'inputBusinessBotRecipients',
-            'existing_chats' => true,
-            'new_chats' => true,
-            'contacts' => true,
-            'non_contacts' => true,
-        ],
-    );
-}
 $cId = null;
-do {
-    $offset = 0;
-    foreach ($bot->getUpdates(['offset' => $offset, 'timeout' => 10.0]) as $u) {
-        $offset = $u['update_id'] + 1;
-        $u = $u['update'];
-        if ($u['_'] !== 'updateBotBusinessConnect') {
-            continue;
-        }
-        if ($u['connection']['disabled']) {
-            continue;
-        }
-        $cId = $u['connection']['connection_id'];
-        break 2;
-    }
-} while (true);
-$bot->account->getBotBusinessConnection(
-    connection_id: $cId,
-);
-$bot->setNoop();
 
-Logger::log("Initialized business connection!");
+$toggleBusiness = static function (bool $enable) use ($user, $bot, &$cId): void {
+    $bot->getUpdates();
+
+    Logger::log($enable ? "Initializing business connection..." : "Deinitializing business connection...");
+    $rights = ['_' => 'businessBotRights'];
+    foreach ($user->getTL()->getConstructors()->findByPredicate('businessBotRights')['params'] as $param) {
+        if ($param['type'] === 'true') {
+            $rights[$param['name']] = true;
+        }
+    }
+
+    foreach ([$enable, !$enable] as $deleted) {
+        $user->account->updateConnectedBot(
+            bot: $bot->getSelf()['username'],
+            deleted: $deleted,
+            rights: $rights,
+            recipients: [
+                '_' => 'inputBusinessBotRecipients',
+                'existing_chats' => true,
+                'new_chats' => true,
+                'contacts' => true,
+                'non_contacts' => true,
+            ],
+        );
+    }
+    $cId = null;
+    $offset = 0;
+    do {
+        foreach ($bot->getUpdates(['offset' => $offset, 'timeout' => 10.0]) as $u) {
+            $offset = $u['update_id'] + 1;
+            $u = $u['update'];
+            if ($u['_'] !== 'updateBotBusinessConnect') {
+                continue;
+            }
+            if ($u['connection']['disabled'] !== !$enable) {
+                continue;
+            }
+            $cId = $u['connection']['connection_id'];
+            break 2;
+        }
+    } while (true);
+    $bot->account->getBotBusinessConnection(
+        connection_id: $cId,
+    );
+    $bot->setNoop();
+
+    Logger::log($enable ? "Initialized business connection!" : "Deinitialized business connection!");
+};
+
+$toggleBusiness(true);
 
 function call(API $API, string $method, array $args = []): void
 {
@@ -136,6 +173,32 @@ function call(API $API, string $method, array $args = []): void
 
 $methods = [];
 
+$wait = static function (bool $force = false) use (&$methods): void {
+    if (count($methods) >= 10 || $force) {
+        Logger::log("Processing ".implode(", ", array_keys($methods)));
+        await($methods);
+        Logger::log("Done!");
+        Assert::isEmpty($methods, "Some methods were not processed!");
+    }
+};
+
+foreach ($layer['methods']->by_id as $constructor) {
+    $name = $constructor['method'];
+    if (strtolower($name) === 'account.deleteaccount'
+        || !str_contains($name, '.')) {
+        continue;
+    }
+    $methods["unauthed $name"]= async(static function () use ($unauthed, $name, &$methods): void {
+        try {
+            call($unauthed, $name);
+        } catch (RPCErrorException|PTSException) {
+        }
+        unset($methods["unauthed $name"]);
+    });
+    $wait();
+}
+
+$names = [];
 foreach ($layer['methods']->by_id as $constructor) {
     $name = $constructor['method'];
     if (strtolower($name) === 'account.deleteaccount'
@@ -150,6 +213,10 @@ foreach ($layer['methods']->by_id as $constructor) {
         || !str_contains($name, '.')) {
         continue;
     }
+    $names []= $constructor['method'];
+}
+
+foreach ($names as $name) {
     $methods["bot $name"]= async(static function () use ($bot, $name, &$methods): void {
         try {
             call($bot, $name);
@@ -164,10 +231,24 @@ foreach ($layer['methods']->by_id as $constructor) {
         }
         unset($methods["user $name"]);
     });
-    $methods["business $name"] = async(static function () use ($bot, $name, $cId, &$methods): void {
+    $methods["business $name"] = async(static function () use ($bot, $name, $cId, $client, $auth, &$methods): void {
+        $ok = true;
         try {
             call($bot, $name, ['businessConnectionId' => $cId]);
-        } catch (RPCErrorException|PTSException) {
+        } catch (PTSException|BusinessConnectionNotAllowedError) {
+            $ok = false;
+        } catch (RPCErrorException $e) {
+            echo "Got ".$e->getMessage()." for business $name".PHP_EOL;
+        }
+
+        if ($ok && $auth) {
+            $res = json_decode(
+                (
+                    $client
+                        ->request(new Request('https://report-rpc-error.madelineproto.xyz/?auth='.$auth.'&error=BUSINESS_CONNECTION_INVALID&method='.urlencode($name).'&code=400'))
+                )->getBody()->buffer(),
+                true,
+            );
         }
         unset($methods["business $name"]);
     });
@@ -178,30 +259,29 @@ foreach ($layer['methods']->by_id as $constructor) {
         }
         unset($methods["business invalid $name"]);
     });
-    if (count($methods) >= 10) {
-        Logger::log("Processing ".implode(", ", array_keys($methods)));
-        await($methods);
-        Logger::log("Done!");
-    }
+
+    $wait();
 }
 
-Logger::log("Processing ".implode(", ", array_keys($methods)));
-await($methods);
-Logger::log("Done!");
-Assert::isEmpty($methods, "Some methods were not processed!");
+$wait(true);
 
-$user->account->updateConnectedBot(
-    bot: $bot->getSelf()['username'],
-    deleted: true,
-    rights: $rights,
-    recipients: [
-        '_' => 'inputBusinessBotRecipients',
-        'existing_chats' => true,
-        'new_chats' => true,
-        'contacts' => true,
-        'non_contacts' => true,
-    ],
-);
-unset($bot, $user);
+$toggleBusiness(false);
 
+foreach ($names as $name) {
+    $methods["bot disconnected $name"]= async(static function () use ($bot, $name, &$methods): void {
+        try {
+            call($bot, $name);
+        } catch (RPCErrorException|PTSException) {
+        }
+        unset($methods["bot disconnected $name"]);
+    });
+
+    $wait();
+}
+
+$wait(true);
+
+unset($bot, $user, $unauthed, $wait, $toggleBusiness);
+
+// Give time for error reporting routine to finish
 EventLoop::run();

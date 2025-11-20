@@ -19,17 +19,27 @@ declare(strict_types=1);
 namespace danog\MadelineProto\FileRefExtractor;
 
 use AssertionError;
+use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
 use Webmozart\Assert\Assert;
 
 final readonly class TLContext
 {
     public function __construct(
         public TLWrapper $tl,
-        public BuildMode $buildMode,
+        public Ast $buildMode,
         public string $position,
         public bool $isConstructor,
         public bool $ignoreFlagged = false,
     ) {
+    }
+
+    public function build(TypedOp $op, string $key): array
+    {
+        $prev = $this->buildMode->curKey;
+        $this->buildMode->curKey = $key;
+        $v = $op->build($this);
+        $this->buildMode->curKey = $prev;
+        return $v;
     }
 
     /**

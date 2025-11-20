@@ -21,17 +21,17 @@ namespace danog\MadelineProto;
 final class Lang
 {
     public const PERCENTAGES = [
-        'zh_Hans' => 98,
+        'zh_Hans' => 100,
         'en' => 100,
-        'fr' => 35,
+        'fr' => 36,
         'de' => 0,
         'he' => 100,
         'it' => 100,
-        'ckb' => 73,
-        'fa' => 98,
+        'ckb' => 74,
+        'fa' => 100,
         'pl' => 1,
         'pt' => 81,
-        'ru' => 81,
+        'ru' => 82,
         'uz' => 100,
     ];
 

@@ -19,17 +19,18 @@ declare(strict_types=1);
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
 use danog\MadelineProto\FileRefExtractor\ActionOp;
-use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
 use danog\MadelineProto\FileRefExtractor\TLContext;
+use danog\MadelineProto\FileRefExtractor\TypedOp;
 use Webmozart\Assert\Assert;
 
 final readonly class GetMessageOp implements ActionOp
 {
     public function __construct(
-        private readonly FieldExtractorOp $peer,
-        private readonly FieldExtractorOp $id,
-        private readonly ?FieldExtractorOp $fromScheduled,
+        private readonly TypedOp $peer,
+        private readonly TypedOp $id,
+        private readonly ?TypedOp $fromScheduled,
+        private readonly ?TypedOp $quickReplyShortcutId,
+        private readonly string $stored_constructor
     ) {
     }
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?ActionOp
@@ -46,8 +47,12 @@ final readonly class GetMessageOp implements ActionOp
         if ($fromScheduled === null && $this->fromScheduled !== null) {
             return null;
         }
-        if ($peer !== $this->peer || $id !== $this->id || $fromScheduled !== $this->fromScheduled) {
-            return new self($peer, $id, $fromScheduled);
+        $quickReplyShortcutId = $this->quickReplyShortcutId?->normalize($stack, $current, $ignoreFlag);
+        if ($quickReplyShortcutId === null && $this->quickReplyShortcutId !== null) {
+            return null;
+        }
+        if ($peer !== $this->peer || $id !== $this->id || $fromScheduled !== $this->fromScheduled || $quickReplyShortcutId !== $this->quickReplyShortcutId) {
+            return new self($peer, $id, $fromScheduled, $quickReplyShortcutId, $this->stored_constructor);
         }
         return $this;
     }
@@ -58,22 +63,27 @@ final readonly class GetMessageOp implements ActionOp
 
     public function build(TLContext $tl): void
     {
-        Assert::eq($this->peer->getType($tl), 'Peer');
+        Assert::eq($this->peer->getType($tl), 'InputPeer');
         Assert::eq($this->id->getType($tl), 'int');
         if ($this->fromScheduled !== null) {
             Assert::eq($this->fromScheduled->getType($tl), 'true');
         }
+        if ($this->quickReplyShortcutId !== null) {
+            Assert::eq($this->quickReplyShortcutId->getType($tl), 'int');
+        }
         $extra = [];
         if ($this->fromScheduled !== null) {
-            $extra['from_scheduled'] = $this->fromScheduled->build($tl);
+            $extra['from_scheduled'] = $tl->build($this->fromScheduled, 'from_scheduled');
         }
-        if ($tl->buildMode instanceof Ast) {
-            $tl->buildMode->addNode($tl, [
-                '_' => 'getMessageOp',
-                'peer' => $this->peer->build($tl),
-                'id' => $this->id->build($tl),
-                ...$extra,
-            ]);
+        if ($this->quickReplyShortcutId !== null) {
+            $extra['quick_reply_shortcut_id'] = $tl->build($this->quickReplyShortcutId, 'quick_reply_shortcut_id');
         }
+        $tl->buildMode->addNode($tl, [
+            '_' => 'getMessageOp',
+            'stored_constructor' => $this->stored_constructor,
+            'peer' => $tl->build($this->peer, 'peer'),
+            'id' => $tl->build($this->id, 'id'),
+            ...$extra,
+        ]);
     }
 }

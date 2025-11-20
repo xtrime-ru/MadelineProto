@@ -21,10 +21,9 @@ namespace danog\MadelineProto\FileRefExtractor;
 use AssertionError;
 use danog\MadelineProto\FileRefExtractor\BuildMode\Ast;
 use danog\MadelineProto\FileRefExtractor\Ops\CopyOp;
-use danog\MadelineProto\FileRefExtractor\Ops\ExtractFromParentOp;
 use Webmozart\Assert\Assert;
 
-abstract readonly class FieldExtractorOp implements TypedOp
+final readonly class Path
 {
     final public const FLAG_UNPACK_ARRAY = 1;
     final public const FLAG_IF_ABSENT_ABORT = 2;
@@ -32,6 +31,8 @@ abstract readonly class FieldExtractorOp implements TypedOp
     public function __construct(
         /** @var list<list{0: string, 1: string, 2?: int-mask-of<self::FLAG_*>|TypedOp}> */
         public array $path,
+        public bool $isFromParent = false,
+        private ?string $customName = null,
     ) {
         foreach ($path as $k => $elem) {
             if (\count($elem) !== 2 && \count($elem) !== 3) {
@@ -55,10 +56,41 @@ abstract readonly class FieldExtractorOp implements TypedOp
         }
     }
 
-    final protected function buildPath(TLContext $tl): array
+    public function normalize(array $stack, string $current, bool $ignoreFlag): ?self
     {
         $new = [];
-        foreach ($this->path as $part) {
+        foreach ($this->path as $i => $part) {
+            if ($ignoreFlag && \array_key_exists(2, $part) && \is_int($part[2]) && ($part[2] & self::FLAG_IF_ABSENT_ABORT)) {
+                return null;
+            }
+            if (isset($part[2]) && $part[2] instanceof TypedOp) {
+                $n = $part[2]->normalize($stack, $current, $ignoreFlag);
+                if ($n === null) {
+                    return null;
+                }
+                $part[2] = $n;
+            }
+            $new[$i] = $part;
+        }
+        if ($this->isFromParent) {
+            // From parent
+            if ($stack[0][0] === $this->path[0][0]) {
+                return new self($new, true, $this->customName);
+            }
+            return null;
+        }
+        Assert::eq($this->path[0][0], $current);
+        return new self(
+            [...$stack, ...$new],
+            false,
+            $this->customName
+        );
+    }
+
+    public function buildPath(TLContext $tl, string $extractor): string
+    {
+        $new = [];
+        foreach ($this->path as $k => $part) {
             $newPart = [
                 '_' => 'pathPart',
                 'constructor' => $part[0],
@@ -67,7 +99,16 @@ abstract readonly class FieldExtractorOp implements TypedOp
             ];
             if (isset($part[2])) {
                 if ($part[2] instanceof TypedOp) {
-                    $newPart['flag'] = ['_' => 'paramIsFlagFallback', 'fallback' => $part[2]->build($tl)];
+                    $fallback = $part[2]->build($tl);
+                    array_walk_recursive($fallback, static function ($v): void {
+                        if (\is_array($v)
+                            && isset($v['_'])
+                            && \in_array($v['_'], ['copyOp', 'getInputChannelByIdOp', 'getInputUserByIdOp', 'getInputPeerByIdOp'], true)
+                        ) {
+                            throw new \InvalidArgumentException("Cannot use {$v['_']} as fallback in TypedOp");
+                        }
+                    });
+                    $newPart['flag'] = ['_' => 'paramIsFlagFallback', 'fallback' => $fallback];
                 } elseif (\is_int($part[2])) {
                     if ($part[2] & self::FLAG_UNPACK_ARRAY) {
                         if ($tl->buildMode instanceof Ast && !$tl->buildMode->allowUnpacking) {
@@ -79,21 +120,78 @@ abstract readonly class FieldExtractorOp implements TypedOp
                         $newPart['flag'] = ['_' => 'paramIsFlagAbortIfEmpty'];
                     }
                     if ($part[2] & self::FLAG_PASSTHROUGH) {
+                        Assert::eq($k, \count($this->path) - 1, 'Can only use passthrough flag on last element');
                         $newPart['flag'] = ['_' => 'paramIsFlagPassthrough'];
                     }
                 }
             }
             $new[] = $newPart;
         }
-        return ['_' => $this instanceof ExtractFromParentOp ? 'pathParent': 'path', 'parts' => $new];
-    }
-    final public function getType(TLContext $tl): string
-    {
-        $path = $this;
-        if ($path instanceof CopyOp) {
-            Assert::eq($tl->position, $path->path[0][0], "getTypeAtPosition: Current constructor {$tl->position} does not match expected constructor {$path->path[0][0]}");
+        $serialized = json_encode([$extractor, $this->isFromParent, $new], flags: JSON_THROW_ON_ERROR);
+        if (isset($tl->buildMode->storedByPath[$serialized])) {
+            $name = $tl->buildMode->storedByPath[$serialized];
+        } else {
+            $isFlag = $newPart['flag']['_'] === 'paramIsFlagPassthrough';
+            $type = $this->getType($tl);
+            if ($extractor === 'extractAndStore') {
+
+            } elseif ($extractor === 'extractInputStickerSetFromDocumentAttributesAndStore') {
+                Assert::eq($type, 'Vector<DocumentAttribute>');
+                $type = 'InputStickerSet';
+            } elseif ($extractor === 'extractInputStickerSetFromStickerSetAndStore') {
+                Assert::eq($type, 'StickerSet');
+                $type = 'InputStickerSet';
+            } elseif ($extractor === 'extractPeerIdFromPeerAndStore') {
+                Assert::eq($type, 'Peer');
+                $type = 'long';
+            } elseif ($extractor === 'extractPeerIdFromInputPeerAndStore') {
+                Assert::eq($type, 'InputPeer');
+                $type = 'long';
+            } elseif ($extractor === 'extractChannelIdFromChannelAndStore') {
+                Assert::eq($type, 'Channel');
+                $type = 'long';
+            } elseif ($extractor === 'extractChannelIdFromInputChannelAndStore') {
+                Assert::eq($type, 'InputChannel');
+                $type = 'long';
+            } elseif ($extractor === 'extractUserIdFromUserAndStore') {
+                Assert::eq($type, 'Channel');
+                $type = 'long';
+            } elseif ($extractor === 'extractUserIdFromInputUserAndStore') {
+                Assert::eq($type, 'InputUser');
+                $type = 'long';
+            } else {
+                throw new \InvalidArgumentException('Unknown extractor ' . $extractor);
+            }
+            if ($isFlag) {
+                $flag = $tl->buildMode->storedFlags++;
+                $type = "flags.$flag?$type";
+            }
+            $name = $this->customName ?? $tl->buildMode->curKey;
+            Assert::notNull($name);
+            if (isset($tl->buildMode->stored[$name])) {
+                throw new AssertionError("Need custom name (already have $name) for ".json_encode($this->path));
+            }
+            $tl->buildMode->stored[$name] = [
+                'type' => $type,
+                'extractor' => [
+                    '_' => $extractor,
+                    'from' => ['_' => $this->isFromParent ? 'pathParent': 'path', 'parts' => $new],
+                    'to' => $name,
+                ],
+            ];
+            $tl->buildMode->storedByPath[$serialized] = $name;
         }
-        $path = $path->path;
+        if ($this->isFromParent) {
+            $tl->buildMode->setNeedsParent($this->path[0][0]);
+        }
+        return $name;
+    }
+    public function getType(TLContext $tl): string
+    {
+        if ($this instanceof CopyOp) {
+            Assert::eq($tl->position, $this->path[0][0], "getTypeAtPosition: Current constructor {$tl->position} does not match expected constructor {$this->path[0][0]}");
+        }
+        $path = $this->path;
         $idx = 0;
         $typeForReturn = null;
         $typeForCheck = null;

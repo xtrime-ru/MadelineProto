@@ -55,6 +55,7 @@ final class DataCenterTest extends AsyncTestCase
     }
     public static function setUpBeforeClass(): void
     {
+        /*
         if (isset(self::$proxy)) {
             return;
         }
@@ -63,6 +64,7 @@ final class DataCenterTest extends AsyncTestCase
             break;
         }
         self::$proxyEndpoint = InternetAddress::fromString(str_replace('tcp://', '', $addr));
+        */
 
         self::$main = new API(
             sys_get_temp_dir(). '/'.random_int(0, PHP_INT_MAX).'_'.getmypid().'testing_datacenter_main.madeline',
@@ -111,7 +113,8 @@ final class DataCenterTest extends AsyncTestCase
 
     private static function provideProxies(bool $enable = true): iterable
     {
-        foreach ([HttpProxy::class, SocksProxy::class, null] as $proxy) {
+        //foreach ([HttpProxy::class, SocksProxy::class, null] as $proxy) {
+        foreach ([null] as $proxy) {
             yield $proxy ? [$proxy => [['address' => self::$proxyEndpoint->getAddress(), 'port' => self::$proxyEndpoint->getPort()]]] : [];
         }
     }

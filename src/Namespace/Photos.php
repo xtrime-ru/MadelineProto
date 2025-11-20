@@ -56,7 +56,7 @@ interface Photos
      *
      * @param array|int|string $user_id User ID @see https://docs.madelineproto.xyz/API_docs/types/InputUser.html
      * @param int $offset Number of list elements to be skipped
-     * @param int $max_id If a positive value was transferred, the method will return only photos with IDs less than the set one. This parameter is often useful when [refetching file references »](https://core.telegram.org/api/file_reference), as in conjuction with `limit=1` and `offset=-1` the [photo](https://docs.madelineproto.xyz/API_docs/constructors/photo.html) object with the `id` specified in `max_id` can be fetched.
+     * @param int $max_id If a positive value was transferred, the method will return only photos with IDs less than the set one. This parameter is often useful when [refetching file references »](https://core.telegram.org/api/file-references), as in conjuction with `limit=1` and `offset=-1` the [photo](https://docs.madelineproto.xyz/API_docs/constructors/photo.html) object with the `id` specified in `max_id` can be fetched.
      * @param int $limit Number of list elements to be returned
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
      * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
@@ -72,7 +72,7 @@ interface Photos
      * The `file`, `video` and `video_emoji_markup` flags are mutually exclusive.
      *
      * @param bool $suggest If set, will send a [messageActionSuggestProfilePhoto](https://docs.madelineproto.xyz/API_docs/constructors/messageActionSuggestProfilePhoto.html) service message to `user_id`, suggesting them to use the specified profile picture; otherwise, will set a personal profile picture for the user (only visible to the current user).
-     * @param bool $save If set, removes a previously set personal profile picture (does not affect suggested profile pictures, to remove them simply deleted the [messageActionSuggestProfilePhoto](https://docs.madelineproto.xyz/API_docs/constructors/messageActionSuggestProfilePhoto.html) service message with [messages.deleteMessages](https://docs.madelineproto.xyz/API_docs/methods/messages.deleteMessages.html)).
+     * @param bool $save If set, removes a previously set personal profile picture (does not affect suggested profile pictures, to remove them simply delete the [messageActionSuggestProfilePhoto](https://docs.madelineproto.xyz/API_docs/constructors/messageActionSuggestProfilePhoto.html) service message with [messages.deleteMessages](https://docs.madelineproto.xyz/API_docs/methods/messages.deleteMessages.html)).
      * @param array|int|string $user_id The contact @see https://docs.madelineproto.xyz/API_docs/types/InputUser.html
      * @param mixed $file A file name or a file URL. You can also use amphp async streams, amphp HTTP response objects, and [much more](https://docs.madelineproto.xyz/docs/FILES.html#downloading-files)!
      * @param mixed $video A file name or a file URL. You can also use amphp async streams, amphp HTTP response objects, and [much more](https://docs.madelineproto.xyz/docs/FILES.html#downloading-files)!

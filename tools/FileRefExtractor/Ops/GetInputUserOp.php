@@ -18,15 +18,16 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\FileRefExtractor\Ops;
 
-use danog\MadelineProto\FileRefExtractor\FieldExtractorOp;
 use danog\MadelineProto\FileRefExtractor\FieldTransformationOp;
+use danog\MadelineProto\FileRefExtractor\Path;
 use danog\MadelineProto\FileRefExtractor\TLContext;
 use Webmozart\Assert\Assert;
 
 final readonly class GetInputUserOp implements FieldTransformationOp
 {
-    public function __construct(private readonly FieldExtractorOp $path)
-    {
+    public function __construct(
+        private Path $path,
+    ) {
     }
 
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
@@ -49,7 +50,14 @@ final readonly class GetInputUserOp implements FieldTransformationOp
     {
         $type = $this->path->getType($tl);
         if ($type === 'InputUser') {
-            return $this->path->build($tl);
+            return [
+                '_' => 'typedOp',
+                'type' => $this->getType($tl),
+                'op' => [
+                    '_' => 'getInputUserByIdOp',
+                    'from' => $this->path->buildPath($tl, 'extractUserIdFromInputUserAndStore'),
+                ],
+            ];
         }
         if ($type === 'long') {
             return [
@@ -57,7 +65,7 @@ final readonly class GetInputUserOp implements FieldTransformationOp
                 'type' => $this->getType($tl),
                 'op' => [
                     '_' => 'getInputUserByIdOp',
-                    'path' => $this->path->build($tl),
+                    'from' => $this->path->buildPath($tl, 'extractAndStore'),
                 ],
             ];
         }
@@ -66,8 +74,8 @@ final readonly class GetInputUserOp implements FieldTransformationOp
             '_' => 'typedOp',
             'type' => $this->getType($tl),
             'op' => [
-                '_' => 'getInputUserOp',
-                'path' => $this->path->build($tl),
+                '_' => 'getInputUserByIdOp',
+                'from' => $this->path->buildPath($tl, 'extractUserIdFromUserAndStore'),
             ],
         ];
     }

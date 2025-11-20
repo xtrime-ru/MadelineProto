@@ -26,7 +26,7 @@ final readonly class PrimitiveLiteralOp implements LiteralOp
 {
     public function __construct(private readonly string $type, private readonly mixed $value)
     {
-        Assert::inArray($type, ['int', 'long', 'string', 'bool', 'float'], "Invalid type '$type' for LiteralOp");
+        Assert::inArray($type, ['int', 'long', 'string', 'bool', 'float', 'bytes'], "Invalid type '$type' for LiteralOp");
     }
 
     public function normalize(array $stack, string $current, bool $ignoreFlag): ?\danog\MadelineProto\FileRefExtractor\TypedOp
@@ -50,6 +50,7 @@ final readonly class PrimitiveLiteralOp implements LiteralOp
                     'string' => 'stringLiteralOp',
                     'bool' => 'boolLiteralOp',
                     'double' => 'doubleLiteralOp',
+                    'bytes' => 'bytesLiteralOp',
                 },
                 'value' => $this->value,
             ],

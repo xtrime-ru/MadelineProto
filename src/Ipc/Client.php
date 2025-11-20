@@ -139,6 +139,7 @@ final class Client extends ClientAbstract
     public function stopIpcServer(): void
     {
         $this->run = false;
+        $this->serverFuture?->await();
         $this->server->send(Server::SHUTDOWN);
     }
     /**

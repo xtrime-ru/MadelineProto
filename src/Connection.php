@@ -328,7 +328,9 @@ final class Connection
      */
     private function methodAbstractions(string &$method, array &$arguments): void
     {
-        if ($method === 'messages.importChatInvite' && isset($arguments['hash']) && \is_string($arguments['hash']) && $r = Tools::parseLink($arguments['hash'])) {
+        if ($method === 'messages.sendPaidReaction') {
+            $arguments['random_id'] = (time() << 32) | random_int(0, 0xFF_FF_FF_FF);
+        } elseif ($method === 'messages.importChatInvite' && isset($arguments['hash']) && \is_string($arguments['hash']) && $r = Tools::parseLink($arguments['hash'])) {
             [$invite, $content] = $r;
             if ($invite) {
                 $arguments['hash'] = $content;
@@ -401,7 +403,7 @@ final class Connection
             || $method === 'stories.editStory'
         ) {
             if ($method === 'messages.uploadMedia') {
-                if (!isset($arguments['peer']) && !$this->API->isSelfBot()) {
+                if (!isset($arguments['peer']) && $this->API->getSelf() && !$this->API->isSelfBot()) {
                     $arguments['peer'] = 'me';
                 }
             }

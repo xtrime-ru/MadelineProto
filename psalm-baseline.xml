@@ -1732,6 +1732,11 @@
       <code><![CDATA[$this->callId]]></code>
     </MixedAssignment>
   </file>
+  <file src="src/EventHandler/Message/Service/DialogSetChatTheme.php">
+    <MixedAssignment>
+      <code><![CDATA[$this->emoticon]]></code>
+    </MixedAssignment>
+  </file>
   <file src="src/EventHandler/Participant.php">
     <MixedAssignment>
       <code><![CDATA[$res[$prop->getName()]]]></code>
@@ -4229,6 +4234,9 @@
       <code><![CDATA[$messageMedia]]></code>
     </PossiblyNullArgument>
     <PossiblyNullArrayAccess>
+      <code><![CDATA[$constructor['_']]]></code>
+      <code><![CDATA[$constructor['media']]]></code>
+      <code><![CDATA[$constructor['message']]]></code>
       <code><![CDATA[$messageMedia['decrypted_message']['media']]]></code>
     </PossiblyNullArrayAccess>
     <PossiblyNullOperand>
@@ -4283,16 +4291,42 @@
     </TypeDoesNotContainType>
   </file>
   <file src="src/MTProtoTools/FilesAbstraction.php">
-    <DocblockTypeContradiction>
-      <code><![CDATA[\is_array($file)]]></code>
-    </DocblockTypeContradiction>
+    <InvalidReturnType>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Media]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message]]></code>
+    </InvalidReturnType>
+    <MismatchingDocblockParamType>
+      <code><![CDATA[integer|string|null]]></code>
+    </MismatchingDocblockParamType>
+    <MissingDocblockType>
+      <code><![CDATA[public function sendMedia(]]></code>
+    </MissingDocblockType>
     <MixedArgument>
       <code><![CDATA[$attributesOrig['thumbSeek']]]></code>
       <code><![CDATA[$attributesOrig['thumbSeek']]]></code>
       <code><![CDATA[$attributesOrig['thumbSeek']]]></code>
       <code><![CDATA[$attributesOrig['thumbSeek']]]></code>
+      <code><![CDATA[$res]]></code>
       <code><![CDATA[$this->methodCallAsyncRead(
-            $method,
+                'messages.sendEncryptedFile',
+                $params
+            )]]></code>
+      <code><![CDATA[$this->methodCallAsyncRead(
+            'messages.sendMedia',
             $params
         )]]></code>
       <code><![CDATA[$thumb]]></code>
@@ -4309,7 +4343,10 @@
       <code><![CDATA[$attributes[0]['title']]]></code>
       <code><![CDATA[$attributes[0]['w']]]></code>
       <code><![CDATA[$file['iv']]]></code>
+      <code><![CDATA[$file['iv']]]></code>
       <code><![CDATA[$file['key']]]></code>
+      <code><![CDATA[$file['key']]]></code>
+      <code><![CDATA[$file['size']]]></code>
       <code><![CDATA[$file['size']]]></code>
     </MixedArrayAccess>
     <MixedArrayAssignment>
@@ -4327,6 +4364,8 @@
       <code><![CDATA[$attributes[0]['performer']]]></code>
       <code><![CDATA[$attributes[0]['title']]]></code>
       <code><![CDATA[$attributes[0]['w']]]></code>
+      <code><![CDATA[$file]]></code>
+      <code><![CDATA[$media['id']]]></code>
       <code><![CDATA[$message['media']['iv']]]></code>
       <code><![CDATA[$message['media']['iv']]]></code>
       <code><![CDATA[$message['media']['iv']]]></code>
@@ -4336,12 +4375,25 @@
       <code><![CDATA[$message['media']['size']]]></code>
       <code><![CDATA[$message['media']['size']]]></code>
       <code><![CDATA[$message['media']['size']]]></code>
+      <code><![CDATA[$params['media']]]></code>
+      <code><![CDATA[$res]]></code>
+      <code><![CDATA[$reuseId]]></code>
       <code><![CDATA[$thumb]]></code>
       <code><![CDATA[$thumb]]></code>
     </MixedAssignment>
     <MoreSpecificReturnType>
-      <code><![CDATA[Message]]></code>
+      <code><![CDATA[Message|Media]]></code>
     </MoreSpecificReturnType>
+    <NoInterfaceProperties>
+      <code><![CDATA[$file->botApiFileId]]></code>
+      <code><![CDATA[$file->encrypted]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->location]]></code>
+      <code><![CDATA[$file->protected]]></code>
+    </NoInterfaceProperties>
     <PossiblyInvalidArgument>
       <code><![CDATA[$file]]></code>
       <code><![CDATA[$file]]></code>
@@ -4360,17 +4412,44 @@
       <code><![CDATA[$stderr]]></code>
       <code><![CDATA[$stderr]]></code>
     </PossiblyNullArgument>
-    <RedundantConditionGivenDocblockType>
+    <RedundantCondition>
       <code><![CDATA[\is_array($media['file'])]]></code>
-    </RedundantConditionGivenDocblockType>
+    </RedundantCondition>
     <ReferenceConstraintViolation>
       <code><![CDATA[$file]]></code>
       <code><![CDATA[$file]]></code>
       <code><![CDATA[$file]]></code>
       <code><![CDATA[$file]]></code>
       <code><![CDATA[$file]]></code>
-      <code><![CDATA[$file]]></code>
     </ReferenceConstraintViolation>
+    <TypeDoesNotContainType>
+      <code><![CDATA[\is_array($file)]]></code>
+    </TypeDoesNotContainType>
+    <UndefinedPropertyFetch>
+      <code><![CDATA[$file->botApiFileId]]></code>
+      <code><![CDATA[$file->botApiFileId]]></code>
+      <code><![CDATA[$file->botApiFileId]]></code>
+      <code><![CDATA[$file->encrypted]]></code>
+      <code><![CDATA[$file->encrypted]]></code>
+      <code><![CDATA[$file->encrypted]]></code>
+      <code><![CDATA[$file->encrypted]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->fileName]]></code>
+      <code><![CDATA[$file->location]]></code>
+      <code><![CDATA[$file->location]]></code>
+      <code><![CDATA[$file->location]]></code>
+      <code><![CDATA[$file->location]]></code>
+      <code><![CDATA[$file->protected]]></code>
+      <code><![CDATA[$file->protected]]></code>
+    </UndefinedPropertyFetch>
   </file>
   <file src="src/MTProtoTools/FilesLogic.php">
     <MissingClosureReturnType>
@@ -5077,7 +5156,6 @@
       <code><![CDATA[$message['action']['distance']]]></code>
       <code><![CDATA[$message['action']['duration'] ?? null]]></code>
       <code><![CDATA[$message['action']['duration'] ?? null]]></code>
-      <code><![CDATA[$message['action']['emoticon']]]></code>
       <code><![CDATA[$message['action']['game_id']]]></code>
       <code><![CDATA[$message['action']['gift']]]></code>
       <code><![CDATA[$message['action']['hidden'] ?? null]]></code>
@@ -5113,6 +5191,7 @@
       <code><![CDATA[$message['action']['subscription_until_date'] ?? null]]></code>
       <code><![CDATA[$message['action']['text']]]></code>
       <code><![CDATA[$message['action']['text']]]></code>
+      <code><![CDATA[$message['action']['theme']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
@@ -5194,7 +5273,6 @@
       <code><![CDATA[$message['action']['distance']]]></code>
       <code><![CDATA[$message['action']['duration']]]></code>
       <code><![CDATA[$message['action']['duration']]]></code>
-      <code><![CDATA[$message['action']['emoticon']]]></code>
       <code><![CDATA[$message['action']['from_id']]]></code>
       <code><![CDATA[$message['action']['game_id']]]></code>
       <code><![CDATA[$message['action']['gift']]]></code>
@@ -5238,6 +5316,7 @@
       <code><![CDATA[$message['action']['subscription_until_date']]]></code>
       <code><![CDATA[$message['action']['text']]]></code>
       <code><![CDATA[$message['action']['text']]]></code>
+      <code><![CDATA[$message['action']['theme']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
       <code><![CDATA[$message['action']['title']]]></code>
@@ -7232,6 +7311,8 @@
       <code><![CDATA[$x['data']]]></code>
       <code><![CDATA[$x['id']]]></code>
       <code><![CDATA[$x['id']]]></code>
+      <code><![CDATA[$x['linked_monoforum_id']]]></code>
+      <code><![CDATA[$x['linked_monoforum_id']]]></code>
       <code><![CDATA[$x['result']]]></code>
       <code><![CDATA[-$long_len]]></code>
       <code><![CDATA[\is_int($object) ? (float) $object : $object]]></code>
