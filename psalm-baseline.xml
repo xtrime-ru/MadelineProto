@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<files psalm-version="dev-master@cdceda044f0255e4eb1da0557ff1479e6d317e01">
+<files psalm-version="dev-master@0df8d6882bef149abbe640774a1c4097cc97ba8c">
   <file src="src/API.php">
     <ArgumentTypeCoercion>
       <code><![CDATA[$settings]]></code>
@@ -186,7 +186,6 @@
   <file src="src/Broadcast/Broadcast.php">
     <DocblockTypeContradiction>
       <code><![CDATA[$this->broadcasts[$id]]]></code>
-      <code><![CDATA[$this->broadcasts[$id]]]></code>
     </DocblockTypeContradiction>
     <MixedArrayAccess>
       <code><![CDATA[$message['media']['_']]]></code>
@@ -197,7 +196,6 @@
     </MixedAssignment>
     <RedundantConditionGivenDocblockType>
       <code><![CDATA[$this->broadcasts[$id]?->cancel()]]></code>
-      <code><![CDATA[$this->broadcasts[$id]?->getProgress()]]></code>
     </RedundantConditionGivenDocblockType>
   </file>
   <file src="src/Broadcast/InternalState.php">
@@ -615,9 +613,6 @@
       <code><![CDATA[$this->periodicLoops]]></code>
       <code><![CDATA[array<string, PeriodicLoop>]]></code>
     </MixedReturnTypeCoercion>
-    <PossiblyNullArgument>
-      <code><![CDATA[$methodRefl->getParameters()[0]->getType()]]></code>
-    </PossiblyNullArgument>
     <PossiblyNullReference>
       <code><![CDATA[getDbSettings]]></code>
       <code><![CDATA[rethrowInner]]></code>
@@ -7610,6 +7605,9 @@
     <TaintedFile>
       <code><![CDATA[Tools::absolute($file)]]></code>
     </TaintedFile>
+    <TaintedSSRF>
+      <code><![CDATA[Tools::absolute($file)]]></code>
+    </TaintedSSRF>
   </file>
   <file src="src/TL/TLConstructors.php">
     <MissingReturnType>

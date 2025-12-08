@@ -431,7 +431,7 @@ final class FileRefGenerator
         );
 
         // Ignore these for now
-        foreach (['payments.ResaleStarGifts', 'payments.StarGiftUpgradePreview', 'StarGift', 'StarGiftCollection', 'payments.StarGiftCollections'] as $type) {
+        foreach (['payments.ResaleStarGifts', 'payments.StarGiftUpgradePreview', 'StarGift', 'StarGiftCollection', 'payments.StarGiftCollections', 'payments.StarGiftUpgradeAttributes'] as $type) {
             foreach ($TL->getConstructorsOfType($type) as $constructor => $_) {
                 if ($constructor === 'payments.starGiftCollectionsNotModified') {
                     continue;

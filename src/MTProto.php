@@ -231,19 +231,19 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      *
      * @var array<RSA>
      */
-    private array $rsa_keys = [];
+    private array $rsaKeys = [];
     /**
      * RSA keys.
      *
      * @var array<RSA>
      */
-    private array $test_rsa_keys = [];
+    private array $testRsaKeys = [];
     /**
      * CDN RSA keys.
      *
      * @var array<RSA>
      */
-    private array $cdn_rsa_keys = [];
+    private array $cdnRsaKeys = [];
     /**
      * Diffie-hellman config.
      *
@@ -489,11 +489,11 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     public function findRsaKey(array $fps, bool $test, bool $cdn): ?RSA
     {
         if ($cdn) {
-            $list = $this->cdn_rsa_keys;
+            $list = $this->cdnRsaKeys;
         } elseif ($test) {
-            $list = $this->test_rsa_keys;
+            $list = $this->testRsaKeys;
         } else {
-            $list = $this->rsa_keys;
+            $list = $this->rsaKeys;
         }
 
         foreach ($list as $curkey) {
@@ -673,15 +673,15 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
         // Actually instantiate needed classes like a boss
         $this->cleanupProperties();
         // Load rsa keys
-        $this->rsa_keys = [];
+        $this->rsaKeys = [];
         foreach ($this->settings->getConnection()->getRSAKeys() as $key) {
             $key = RSA::load($this->TL, $key);
-            $this->rsa_keys[$key->fp] = $key;
+            $this->rsaKeys[$key->fp] = $key;
         }
-        $this->test_rsa_keys = [];
+        $this->testRsaKeys = [];
         foreach ($this->settings->getConnection()->getTestRSAKeys() as $key) {
             $key = RSA::load($this->TL, $key);
-            $this->test_rsa_keys[$key->fp] = $key;
+            $this->testRsaKeys[$key->fp] = $key;
         }
         // (re)-initialize TL
         $callbacks = [$this, $this->peerDatabase];
@@ -795,8 +795,9 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             'loginState',
 
             // Authorization cache
-            'rsa_keys',
-            'test_rsa_keys',
+            'rsaKeys',
+            'testRsaKeys',
+            'cdnRsaKeys',
             'dh_config',
 
             // Update state
@@ -1519,7 +1520,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
         try {
             foreach (($this->methodCallAsyncRead('help.getCdnConfig', [], $this->loginState->getState()->authorizedDc))['public_keys'] as $curkey) {
                 $curkey = RSA::load($this->TL, $curkey['public_key']);
-                $this->cdn_rsa_keys[$curkey->fp] = $curkey;
+                $this->cdnRsaKeys[$curkey->fp] = $curkey;
             }
         } catch (\danog\MadelineProto\TL\Exception $e) {
             $this->logger->logger($e->getMessage(), Logger::FATAL_ERROR);

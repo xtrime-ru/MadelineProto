@@ -166,13 +166,24 @@ trait AuthKeyHandler
                 }
                 $data_with_padding = $p_q_inner_data.Tools::random(192 - \strlen($p_q_inner_data));
                 $data_pad_reversed = strrev($data_with_padding);
-                do {
+
+                for ($tryInner = 0; $tryInner < 10; $tryInner++) {
                     $temp_key = Tools::random(32);
                     $data_with_hash = $data_pad_reversed.hash('sha256', $temp_key.$data_with_padding, true);
                     $aes_encrypted = Crypt::igeEncrypt($data_with_hash, $temp_key, str_repeat("\0", 32));
                     $temp_key_xor = $temp_key ^ hash('sha256', $aes_encrypted, true);
                     $key_aes_encrypted_bigint = new BigInteger($temp_key_xor.$aes_encrypted, 256);
-                } while ($key_aes_encrypted_bigint->compare($key->n) >= 0);
+
+                    $ok = $key_aes_encrypted_bigint->compare($key->n) < 0;
+                    if ($ok) {
+                        break;
+                    }
+                }
+
+                if (!$ok) {
+                    throw new SecurityException('Failed to generate a valid payload within 10 attempts.');
+                }
+
                 $encrypted_data = $key->encrypt($key_aes_encrypted_bigint);
                 $this->API->logger('Starting Diffie Hellman key exchange', Logger::VERBOSE);
                 /*
