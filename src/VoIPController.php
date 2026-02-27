@@ -18,8 +18,6 @@
 
 namespace danog\MadelineProto;
 
-use Amp\ByteStream\BufferedReader;
-use Amp\ByteStream\ReadableBuffer;
 use Amp\ByteStream\ReadableStream;
 use Amp\ByteStream\WritableStream;
 use Amp\Cancellation;
@@ -29,10 +27,12 @@ use danog\MadelineProto\Loop\VoIP\DjLoop;
 use danog\MadelineProto\MTProtoTools\Crypt;
 use danog\MadelineProto\RPCError\CallAlreadyAcceptedError;
 use danog\MadelineProto\RPCError\CallAlreadyDeclinedError;
+use danog\MadelineProto\Tgcalls\Controller;
 use danog\MadelineProto\VoIP\CallState;
 use danog\MadelineProto\VoIP\DiscardReason;
 use danog\MadelineProto\VoIP\Endpoint;
 use danog\MadelineProto\VoIP\MessageHandler;
+use danog\MadelineProto\VoIP\SignalingProtocolVersion;
 use danog\MadelineProto\VoIP\VoIPState;
 use phpseclib3\Math\BigInteger;
 use Revolt\EventLoop;
@@ -53,7 +53,7 @@ final class VoIPController
         'udp_reflector' => true,
         'min_layer' => 65,
         'max_layer' => 92,
-        /*'library_versions' => [
+        'library_versions' => [
             "2.4.4",
             "2.7.7",
             "5.0.0",
@@ -62,8 +62,8 @@ final class VoIPController
             "8.0.0",
             "9.0.0",
             "10.0.0",
-            "11.0.0"
-        ]*/
+            "11.0.0",
+        ],
     ];
     public const NET_TYPE_UNKNOWN = 0;
     public const NET_TYPE_GPRS = 1;
@@ -126,6 +126,7 @@ final class VoIPController
     private CallState $callState;
 
     private array $call;
+    private ?Controller $tgcallsController = null;
 
     /**
      * @var array<Endpoint>
@@ -263,6 +264,13 @@ final class VoIPController
             }
             $this->visualization = $visualization;
             $this->authKey = $key;
+            $this->tgcallsController = new Controller(
+                $this->authKey,
+                $this->public->outgoing,
+                SignalingProtocolVersion::fromProtocol($params['protocol']),
+                $this->API,
+                $params['connections'] ?? []
+            );
             $this->callState = CallState::RUNNING;
             $this->messageHandler = new MessageHandler(
                 $this,
@@ -333,6 +341,7 @@ final class VoIPController
             if ($this->callState !== CallState::ACCEPTED) {
                 return false;
             }
+
             $this->log(sprintf(Lang::$current_lang['call_completing'], $this->public->otherID), Logger::VERBOSE);
             $dh_config = $this->API->getDhConfig();
             if (hash('sha256', (string) $params['g_a_or_b'], true) !== (string) $this->call['g_a_hash']) {
@@ -358,11 +367,27 @@ final class VoIPController
                 substr(hash('sha256', $key, true), -16)
             );
             $this->initialize($params['connections']);
+            $this->tgcallsController = new Controller(
+                $this->authKey,
+                $this->public->outgoing,
+                SignalingProtocolVersion::fromProtocol($params['protocol']),
+                $this->API,
+                $params['connections']
+            );
             return true;
         } finally {
             EventLoop::queue($lock->release(...));
         }
     }
+
+    public function onSignaling(string $data): void
+    {
+        if ($this->tgcallsController === null) {
+            throw new Exception('Protocol version is not set!');
+        }
+        $this->tgcallsController->onSignaling($data);
+    }
+
     /**
      * Get call emojis (will return null if the call is not inited yet).
      *
@@ -420,99 +445,6 @@ final class VoIPController
             $this->API->methodCallAsyncRead('phone.setCallRating', ['peer' => $this->call, 'rating' => $rating, 'comment' => $comment]);
         }
         return $this;
-    }
-
-    private const SIGNALING_MIN_SIZE = 21;
-    private const SIGNALING_MAX_SIZE = 128 * 1024 * 1024;
-    public function onSignaling(string $data): void
-    {
-        if (\strlen($data) < self::SIGNALING_MIN_SIZE || \strlen($data) > self::SIGNALING_MAX_SIZE) {
-            Logger::log('Wrong size in signaling!', Logger::ERROR);
-            return;
-        }
-        $message_key = substr($data, 0, 16);
-        $data = substr($data, 16);
-        [$aes_key, $aes_iv, $x] = Crypt::voipKdf($message_key, $this->authKey, $this->public->outgoing, false);
-        $packet = Crypt::ctrEncrypt($data, $aes_key, $aes_iv);
-
-        if ($message_key != substr(hash('sha256', substr($this->authKey, 88 + $x, 32).$packet, true), 8, 16)) {
-            Logger::log('msg_key mismatch!', Logger::ERROR);
-            return;
-        }
-
-        $packet = new BufferedReader(new ReadableBuffer($packet));
-
-        $packets = [];
-        while ($packet->isReadable()) {
-            $seq = unpack('N', $packet->readLength(4))[1];
-            $length = unpack('N', $packet->readLength(4))[1];
-            $packets []= self::deserializeRtc($packet);
-        }
-    }
-
-    public static function deserializeRtc(BufferedReader $buffer): array
-    {
-        switch ($t = \ord($buffer->readLength(1))) {
-            case 1:
-                $candidates = [];
-                for ($x = \ord($buffer->readLength(1)); $x > 0; $x--) {
-                    $candidates []= self::readString($buffer);
-                }
-                return [
-                    '_' => 'candidatesList',
-                    'ufrag' => self::readString($buffer),
-                    'pwd' => self::readString($buffer),
-                ];
-            case 2:
-                $formats = [];
-                for ($x = \ord($buffer->readLength(1)); $x > 0; $x--) {
-                    $name = self::readString($buffer);
-                    $parameters = [];
-                    for ($x = \ord($buffer->readLength(1)); $x > 0; $x--) {
-                        $key = self::readString($buffer);
-                        $value = self::readString($buffer);
-                        $parameters[$key] = $value;
-                    }
-                    $formats[]= [
-                        'name' => $name,
-                        'parameters' => $parameters,
-                    ];
-                }
-                return [
-                    '_' => 'videoFormats',
-                    'formats' => $formats,
-                    'encoders' => \ord($buffer->readLength(1)),
-                ];
-            case 3:
-                return ['_' => 'requestVideo'];
-            case 4:
-                $state = \ord($buffer->readLength(1));
-                return ['_' => 'remoteMediaState', 'audio' => $state & 0x01, 'video' => ($state >> 1) & 0x03];
-            case 5:
-                return ['_' => 'audioData', 'data' => self::readBuffer($buffer)];
-            case 6:
-                return ['_' => 'videoData', 'data' => self::readBuffer($buffer)];
-            case 7:
-                return ['_' => 'unstructuredData', 'data' => self::readBuffer($buffer)];
-            case 8:
-                return ['_' => 'videoParameters', 'aspectRatio' => unpack('V', $buffer->readLength(4))[1]];
-            case 9:
-                return ['_' => 'remoteBatteryLevelIsLow', 'isLow' => (bool) \ord($buffer->readLength(1))];
-            case 10:
-                $lowCost = (bool) \ord($buffer->readLength(1));
-                $isLowDataRequested = (bool) \ord($buffer->readLength(1));
-                return ['_' => 'remoteNetworkStatus', 'lowCost' => $lowCost, 'isLowDataRequested' => $isLowDataRequested];
-        }
-        return ['_' => 'unknown', 'type' => $t];
-    }
-    private static function readString(BufferedReader $buffer): string
-    {
-        /** @psalm-suppress InvalidArgument */
-        return $buffer->readLength(\ord($buffer->readLength(1)));
-    }
-    private static function readBuffer(BufferedReader $buffer): string
-    {
-        return $buffer->readLength(unpack('n', $buffer->readLength(2))[1]);
     }
 
     private function setVoipState(VoIPState $state): bool

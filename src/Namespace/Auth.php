@@ -204,7 +204,7 @@ interface Auth
     /**
      *
      *
-     * @param array{_: 'inputPasskeyCredentialPublicKey', response: array{_: 'inputPasskeyResponseRegister', client_data: mixed, attestation_data?: string}|array{_: 'inputPasskeyResponseLogin', client_data: mixed, authenticator_data?: string, signature?: string, user_handle?: string}, id?: string, raw_id?: string} $credential @see https://docs.madelineproto.xyz/API_docs/types/InputPasskeyCredential.html
+     * @param array{_: 'inputPasskeyCredentialPublicKey', response: array{_: 'inputPasskeyResponseRegister', client_data: mixed, attestation_data?: string}|array{_: 'inputPasskeyResponseLogin', client_data: mixed, authenticator_data?: string, signature?: string, user_handle?: string}, id?: string, raw_id?: string}|array{_: 'inputPasskeyCredentialFirebasePNV', pnv_token?: string} $credential @see https://docs.madelineproto.xyz/API_docs/types/InputPasskeyCredential.html
      * @param int $from_dc_id
      * @param int $from_auth_key_id
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self

@@ -295,7 +295,7 @@ abstract class Serialization
                 }
             }
             try {
-                if ($res = $cancelConnect->await(Tools::getTimeoutCancellation(1.0))) {
+                if ($res = $cancelConnect->await(Tools::getTimeoutCancellation(1.0, "Timeout while connecting to IPC socket"))) {
                     if ($res instanceof Throwable) {
                         return [$res, null];
                     }

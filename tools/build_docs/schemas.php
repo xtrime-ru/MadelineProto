@@ -49,12 +49,12 @@ function loadSchemas(): array
         $res[$matches[1]] = $file;
     }
     ksort($res);
-    file_put_contents(getcwd().'/schemas/list.json', json_encode(array_keys($res)));
-    /*foreach ($res as $layer => $file) {
-        if ($layer > 207) {
+    foreach ($res as $layer => $file) {
+        if ($layer > 222) {
             unset($res[$layer]);
         }
-    }*/
+    }
+    file_put_contents(getcwd().'/schemas/list.json', json_encode(array_keys($res)));
     return $res;
 }
 

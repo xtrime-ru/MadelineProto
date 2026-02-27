@@ -1014,13 +1014,15 @@ final class TL implements TLInterface
             if (!isset($type['subtype'])) {
                 $type['subtype'] = '';
             }
-            return $this->deserialize(
-                gzdecode(
-                    (string) $this->deserialize(
-                        $stream,
-                        ['type' => 'bytes'],
-                    ),
+            $x = gzdecode(
+                (string) $this->deserialize(
+                    $stream,
+                    ['type' => 'bytes'],
                 ),
+            );
+            file_put_contents('/tmp/a', $x);
+            return $this->deserialize(
+                $x,
                 ['type' => '', 'connection' => $type['connection'], 'subtype' => $type['subtype'], 'encrypted' => $type['encrypted']],
             );
         }

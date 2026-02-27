@@ -51,7 +51,7 @@ final class API extends AbstractAPI
      *
      * @var string
      */
-    public const RELEASE = '8.6.2';
+    public const RELEASE = '8.6.3';
     /**
      * We're not logged in.
      *
@@ -310,7 +310,7 @@ final class API extends AbstractAPI
                 $this->session,
                 $settings,
                 $forceFull
-            )->await(Tools::getTimeoutCancellation(30.0));
+            )->await(Tools::getTimeoutCancellation(30.0, "Timeout during session unserialization!"));
         } catch (CancelledException $e) {
             if (!$e->getPrevious() instanceof TimeoutException) {
                 throw $e;

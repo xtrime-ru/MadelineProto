@@ -111,7 +111,13 @@ trait DialogHandler
                 try {
                     $result = $this->methodCallAsyncRead(
                         'updates.getDifference',
-                        $state + ['cancellation' => Tools::getTimeoutCancellation(15.0), 'floodWaitLimit' => 86400]
+                        $state + [
+                            'cancellation' => Tools::getTimeoutCancellation(
+                                15.0,
+                                "Timeout while getting difference for searchRightPts"
+                            ),
+                            'floodWaitLimit' => 86400,
+                        ],
                     )['_'];
                 } catch (Throwable $e) {
                     $this->logger->logger("Got {$e->getMessage()} while getting difference, trying another PTS...");

@@ -52,15 +52,19 @@ final class Crypt
         $aes_iv = substr($sha256_b, 0, 8).substr($sha256_a, 8, 16).substr($sha256_b, 24, 8);
         return [$aes_key, $aes_iv];
     }
+    public static function voipX(bool $outgoing, bool $signaling): int
+    {
+        $x = $outgoing ? 8 : 0;
+        $x += $signaling ? 128 : 0;
+        return $x;
+    }
     /**
      * AES KDF function for MTProto v2, VoIP.
      *
      * @internal
      */
-    public static function voipKdf(string $msg_key, string $auth_key, bool $outgoing, bool $transport): array
+    public static function voipKdf(string $msg_key, string $auth_key, int $x): array
     {
-        $x = $outgoing ? 8 : 0;
-        $x += $transport ? 0 : 128;
         $sha256_a = hash('sha256', $msg_key.substr($auth_key, $x, 36), true);
         $sha256_b = hash('sha256', substr($auth_key, 40 + $x, 36).$msg_key, true);
         $aes_key = substr($sha256_a, 0, 8).substr($sha256_b, 8, 16).substr($sha256_a, 24, 8);

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<files psalm-version="dev-master@0df8d6882bef149abbe640774a1c4097cc97ba8c">
+<files psalm-version="7.0.0-beta14@e66ca9901442421cbdec6c571899410922e22ff6">
   <file src="src/API.php">
     <ArgumentTypeCoercion>
       <code><![CDATA[$settings]]></code>
@@ -73,7 +73,6 @@
       <code><![CDATA[$API->serializeSession($this)]]></code>
     </MixedArgument>
     <PossiblyNullReference>
-      <code><![CDATA[getSettings]]></code>
       <code><![CDATA[logger]]></code>
     </PossiblyNullReference>
   </file>
@@ -4552,6 +4551,7 @@
     <PossiblyNullArrayOffset>
       <code><![CDATA[$peers]]></code>
       <code><![CDATA[$this->db]]></code>
+      <code><![CDATA[$this->pendingDb]]></code>
     </PossiblyNullArrayOffset>
     <PropertyNotSetInConstructor>
       <code><![CDATA[$db]]></code>
@@ -4719,6 +4719,7 @@
     <PossiblyNullArrayOffset>
       <code><![CDATA[$this->fullDb]]></code>
       <code><![CDATA[$this->fullDb]]></code>
+      <code><![CDATA[$this->pendingDb]]></code>
       <code><![CDATA[$this->pendingDb]]></code>
     </PossiblyNullArrayOffset>
     <PropertyNotSetInConstructor>
@@ -6177,6 +6178,11 @@
       <code><![CDATA[$prop]]></code>
       <code><![CDATA[$result['set'.ucfirst(Tools::toCamelCase($prop))]]]></code>
     </MixedAssignment>
+  </file>
+  <file src="src/Shutdown.php">
+    <PossiblyNullArrayOffset>
+      <code><![CDATA[self::$callbacks]]></code>
+    </PossiblyNullArrayOffset>
   </file>
   <file src="src/StrTools.php">
     <ArgumentTypeCoercion>
@@ -7757,6 +7763,86 @@
       <code><![CDATA[$this->label]]></code>
     </MixedAssignment>
   </file>
+  <file src="src/Tgcalls/Controller.php">
+    <AssignmentToVoid>
+      <code><![CDATA[$serialized]]></code>
+    </AssignmentToVoid>
+    <ForbiddenCode>
+      <code><![CDATA[var_dump($message)]]></code>
+    </ForbiddenCode>
+    <MixedArgument>
+      <code><![CDATA[$aes_iv]]></code>
+      <code><![CDATA[$aes_iv]]></code>
+      <code><![CDATA[$aes_key]]></code>
+      <code><![CDATA[$aes_key]]></code>
+      <code><![CDATA[$length]]></code>
+      <code><![CDATA[$sdp]]></code>
+      <code><![CDATA[88 + $x]]></code>
+    </MixedArgument>
+    <MixedArrayAccess>
+      <code><![CDATA[$connection['_']]]></code>
+      <code><![CDATA[$connection['ip']]]></code>
+      <code><![CDATA[$connection['ipv6']]]></code>
+      <code><![CDATA[$connection['password']]]></code>
+      <code><![CDATA[$connection['port']]]></code>
+      <code><![CDATA[$connection['port']]]></code>
+      <code><![CDATA[$connection['stun']]]></code>
+      <code><![CDATA[$connection['turn']]]></code>
+      <code><![CDATA[$connection['username']]]></code>
+      <code><![CDATA[$sdp]]></code>
+    </MixedArrayAccess>
+    <MixedAssignment>
+      <code><![CDATA[$candidate]]></code>
+      <code><![CDATA[$connection]]></code>
+      <code><![CDATA[$iceGatherer]]></code>
+      <code><![CDATA[$ip]]></code>
+      <code><![CDATA[$length]]></code>
+      <code><![CDATA[$seq]]></code>
+      <code><![CDATA[$seq]]></code>
+      <code><![CDATA[$serialized]]></code>
+      <code><![CDATA[$serialized]]></code>
+      <code><![CDATA[$type]]></code>
+      <code><![CDATA[['sdpString' => $sdp]]]></code>
+    </MixedAssignment>
+    <MixedMethodCall>
+      <code><![CDATA[getIceGatherer]]></code>
+      <code><![CDATA[getLocalCandidates]]></code>
+      <code><![CDATA[setSdpMid]]></code>
+      <code><![CDATA[toSDP]]></code>
+    </MixedMethodCall>
+    <MixedOperand>
+      <code><![CDATA[$connection['ipv6']]]></code>
+      <code><![CDATA[$connection['port']]]></code>
+      <code><![CDATA[$connection['port']]]></code>
+      <code><![CDATA[$ip]]></code>
+      <code><![CDATA[$ip]]></code>
+      <code><![CDATA[$seq]]></code>
+      <code><![CDATA[$seq]]></code>
+      <code><![CDATA[$serialized]]></code>
+      <code><![CDATA[$x]]></code>
+    </MixedOperand>
+    <PropertyNotSetInConstructor>
+      <code><![CDATA[$dataChannel]]></code>
+    </PropertyNotSetInConstructor>
+    <TypeDoesNotContainNull>
+      <code><![CDATA[$this->tgcallsVersion === null]]></code>
+    </TypeDoesNotContainNull>
+    <UndefinedInterfaceMethod>
+      <code><![CDATA[getIceTransport]]></code>
+    </UndefinedInterfaceMethod>
+    <UndefinedMethod>
+      <code><![CDATA[TgcallsTools::gzip($serialized)]]></code>
+      <code><![CDATA[TgcallsTools::serializeRtc($this->tgcallsVersion, $message)]]></code>
+    </UndefinedMethod>
+  </file>
+  <file src="src/Tgcalls/TgcallsTools.php">
+    <MixedArgument>
+      <code><![CDATA[unpack('n', $buffer->readLength(2))[1]]]></code>
+    </MixedArgument>
+    <MixedReturnStatement>
+      <code><![CDATA[json_decode($buffer, true, flags: JSON_THROW_ON_ERROR)]]></code>
+    </MixedReturnStatement>
+  </file>
   <file src="src/Tools.php">
     <InvalidOperand>
       <code><![CDATA[memory_get_usage(true)/1024/1024]]></code>
@@ -8137,6 +8223,15 @@
       <code><![CDATA[$stream['codec']]]></code>
     </MixedOperand>
   </file>
+  <file src="src/VoIP/SignalingProtocolVersion.php">
+    <MixedArgument>
+      <code><![CDATA[$v]]></code>
+      <code><![CDATA[end($v)]]></code>
+    </MixedArgument>
+    <MixedAssignment>
+      <code><![CDATA[$v]]></code>
+    </MixedAssignment>
+  </file>
   <file src="src/VoIPController.php">
     <InaccessibleProperty>
       <code><![CDATA[$this->authKey]]></code>
@@ -8153,8 +8248,6 @@
       <code><![CDATA[$visualization]]></code>
     </InvalidPropertyAssignmentValue>
     <MixedArgument>
-      <code><![CDATA[$aes_iv]]></code>
-      <code><![CDATA[$aes_key]]></code>
       <code><![CDATA[$data]]></code>
       <code><![CDATA[$dh_config['p']]]></code>
       <code><![CDATA[$dh_config['p']]]></code>
@@ -8169,12 +8262,14 @@
       <code><![CDATA[$endpoint['port']]]></code>
       <code><![CDATA[$g_b]]></code>
       <code><![CDATA[$params['connections']]]></code>
+      <code><![CDATA[$params['connections']]]></code>
+      <code><![CDATA[$params['connections'] ?? []]]></code>
       <code><![CDATA[$params['id']]]></code>
+      <code><![CDATA[$params['protocol']]]></code>
+      <code><![CDATA[$params['protocol']]]></code>
       <code><![CDATA[$res['connections']]]></code>
       <code><![CDATA[$this->call['a']]]></code>
       <code><![CDATA[$this->call['b']]]></code>
-      <code><![CDATA[88 + $x]]></code>
-      <code><![CDATA[unpack('n', $buffer->readLength(2))[1]]]></code>
     </MixedArgument>
     <MixedArrayAccess>
       <code><![CDATA[$data]]></code>
@@ -8200,9 +8295,7 @@
     <MixedAssignment>
       <code><![CDATA[$endpoint]]></code>
       <code><![CDATA[$g_b]]></code>
-      <code><![CDATA[$length]]></code>
       <code><![CDATA[$res]]></code>
-      <code><![CDATA[$seq]]></code>
       <code><![CDATA[$value]]></code>
       <code><![CDATA[$visualization[]]]></code>
       <code><![CDATA[$visualization[]]]></code>
@@ -8218,7 +8311,6 @@
       <code><![CDATA[$endpoint['id']]]></code>
       <code><![CDATA[$endpoint['id']]]></code>
       <code><![CDATA[$endpoint['ipv6']]]></code>
-      <code><![CDATA[$x]]></code>
     </MixedOperand>
     <PossiblyNullArgument>
       <code><![CDATA[$this->pendingPing]]></code>
@@ -8281,7 +8373,13 @@
       <code><![CDATA[$this->botDialogsUpdatesState['pts']]]></code>
       <code><![CDATA[$this->methodCallAsyncRead(
                         'updates.getDifference',
-                        $state + ['cancellation' => Tools::getTimeoutCancellation(15.0), 'floodWaitLimit' => 86400]
+                        $state + [
+                            'cancellation' => Tools::getTimeoutCancellation(
+                                15.0,
+                                "Timeout while getting difference for searchRightPts"
+                            ),
+                            'floodWaitLimit' => 86400,
+                        ],
                     )['_']]]></code>
     </MixedArrayAccess>
     <MixedArrayAssignment>
@@ -8310,6 +8408,7 @@
       <code><![CDATA[$this->authorization['user']['bot']]]></code>
     </PossiblyNullArrayAccess>
     <PossiblyNullArrayOffset>
+      <code><![CDATA[$dialogs]]></code>
       <code><![CDATA[$dialogs]]></code>
     </PossiblyNullArrayOffset>
     <TypeDoesNotContainType>

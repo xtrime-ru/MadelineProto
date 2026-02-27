@@ -1,5 +1,6 @@
 <?php declare(strict_types=1);
 
+use Amp\CancelledException;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use danog\MadelineProto\API;
@@ -171,6 +172,11 @@ function call(API $API, string $method, array $args = []): void
     Tools::getVar($API, 'wrapper')->getAPI()->methodCallAsyncRead($method, $args);
 }
 
+function getCancellationReason(CancelledException $e): string
+{
+    return $e->getPrevious()?->getMessage() ?? $e->getMessage();
+}
+
 $methods = [];
 
 $wait = static function (bool $force = false) use (&$methods): void {
@@ -191,6 +197,8 @@ foreach ($layer['methods']->by_id as $constructor) {
     $methods["unauthed $name"]= async(static function () use ($unauthed, $name, &$methods): void {
         try {
             call($unauthed, $name);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for unauthed $name: ".getCancellationReason($e), previous: $e);
         } catch (RPCErrorException|PTSException) {
         }
         unset($methods["unauthed $name"]);
@@ -210,6 +218,7 @@ foreach ($layer['methods']->by_id as $constructor) {
         || $name === 'account.updateUsername'
         || $name === 'photos.updateProfilePhoto'
         || $name === 'photos.uploadProfilePhoto'
+        || $name === 'payments.resolveStarGiftOffer' // tmp
         || !str_contains($name, '.')) {
         continue;
     }
@@ -220,6 +229,8 @@ foreach ($names as $name) {
     $methods["bot $name"]= async(static function () use ($bot, $name, &$methods): void {
         try {
             call($bot, $name);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for bot $name: ".getCancellationReason($e), previous: $e);
         } catch (RPCErrorException|PTSException) {
         }
         unset($methods["bot $name"]);
@@ -227,6 +238,8 @@ foreach ($names as $name) {
     $methods["user $name"] = async(static function () use ($user, $name, &$methods): void {
         try {
             call($user, $name);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for user $name: ".getCancellationReason($e), previous: $e);
         } catch (RPCErrorException|PTSException) {
         }
         unset($methods["user $name"]);
@@ -235,6 +248,8 @@ foreach ($names as $name) {
         $ok = true;
         try {
             call($bot, $name, ['businessConnectionId' => $cId]);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for business $name: ".getCancellationReason($e), previous: $e);
         } catch (PTSException|BusinessConnectionNotAllowedError) {
             $ok = false;
         } catch (RPCErrorException $e) {
@@ -255,6 +270,8 @@ foreach ($names as $name) {
     $methods["business invalid $name"] = async(static function () use ($bot, $name, &$methods): void {
         try {
             call($bot, $name, ['businessConnectionId' => '']);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for business invalid $name: ".getCancellationReason($e), previous: $e);
         } catch (RPCErrorException|PTSException) {
         }
         unset($methods["business invalid $name"]);
@@ -271,6 +288,8 @@ foreach ($names as $name) {
     $methods["bot disconnected $name"]= async(static function () use ($bot, $name, &$methods): void {
         try {
             call($bot, $name);
+        } catch (CancelledException $e) {
+            throw new \RuntimeException("Got cancellation for bot disconnected $name: ".getCancellationReason($e), previous: $e);
         } catch (RPCErrorException|PTSException) {
         }
         unset($methods["bot disconnected $name"]);

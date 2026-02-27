@@ -719,4 +719,15 @@ interface Channels
      * @param ?\Amp\Cancellation $cancellation Cancellation
      */
     public function setMainProfileTab(array $tab, array|int|string|null $channel = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): bool;
+
+    /**
+     *
+     *
+     * @param array|int|string $channel @see https://docs.madelineproto.xyz/API_docs/types/InputChannel.html
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     * @return array|int|string @see https://docs.madelineproto.xyz/API_docs/types/User.html
+     */
+    public function getFutureCreatorAfterLeave(array|int|string|null $channel = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array|int|string;
 }

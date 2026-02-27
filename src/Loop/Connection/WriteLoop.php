@@ -204,7 +204,13 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                 }
                 if ($msgIds) {
                     $this->API->logger("Still missing {$list} on DC {$this->datacenter}, sending state request", Logger::ERROR);
-                    $this->connection->objectCallAsync('msgs_state_req', ['msg_ids' => $msgIds, 'cancellation' => new \Amp\TimeoutCancellation(self::LONG_POLL_TIMEOUT)], $deferred);
+                    $this->connection->objectCallAsync('msgs_state_req', [
+                        'msg_ids' => $msgIds,
+                        'cancellation' => new \Amp\TimeoutCancellation(
+                            self::LONG_POLL_TIMEOUT,
+                            "Timeout while waiting for msgs_state_req response on DC {$this->datacenter}"
+                        ),
+                    ], $deferred);
                     $deferred->getFuture()->map(function (array|\Closure $result) use ($arr): void {
                         try {
                             if (\is_callable($result)) {
