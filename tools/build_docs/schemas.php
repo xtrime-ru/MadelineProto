@@ -50,7 +50,7 @@ function loadSchemas(): array
     }
     ksort($res);
     foreach ($res as $layer => $file) {
-        if ($layer > 222) {
+        if ($layer > 223) {
             unset($res[$layer]);
         }
     }

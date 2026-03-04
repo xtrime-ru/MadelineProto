@@ -42,7 +42,7 @@ use Webmozart\Assert\Assert;
 
 final class FileRefGenerator
 {
-    public static function generate(int|string $layer, string $inputSchema, string $outputFile, string $outputFileJson): void
+    public static function generate(int $layer, string $inputSchema, string $outputFile, string $outputFileJson): void
     {
         Magic::start(false);
         $schema = new TLSchema;
@@ -680,7 +680,7 @@ final class FileRefGenerator
             }
         }
 
-        $output->finalize(array_filter($outgoingCons), $incomingCons, $outputFile, $outputFileJson);
+        $output->finalize($layer, array_filter($outgoingCons), $incomingCons, $outputFile, $outputFileJson);
 
         echo("OK $layer!\n".PHP_EOL);
     }

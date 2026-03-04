@@ -76,7 +76,7 @@
         "revolt/event-loop-adapter-react": "^1.1.1",
         "dg/bypass-finals": "dev-master",
         "brianium/paratest": "^6.11.1",
-        "vimeo/psalm": "7.0.0-beta14"
+        "vimeo/psalm": "dev-master"
     },
     "suggest": {
         "ext-primemodule": "Install the primemodule and FFI extensions to speed up MadelineProto (https://prime.madelineproto.xyz)",

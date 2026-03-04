@@ -33,5 +33,11 @@
         <StringIncrement errorLevel="suppress" />
         <InvalidTraversableImplementation errorLevel="suppress" />
         <RedundantPropertyInitializationCheck errorLevel="suppress" />
+
+        <!-- Tmp, more work needed on the Psalm side -->
+        <MissingPureAnnotation errorLevel="suppress" />
+        <MissingImmutableAnnotation errorLevel="suppress" />
+        <MissingAbstractPureAnnotation errorLevel="suppress" />
+        <MissingInterfaceImmutableAnnotation errorLevel="suppress" />
     </issueHandlers>
 </psalm>

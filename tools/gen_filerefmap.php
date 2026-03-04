@@ -64,15 +64,15 @@ function generate(int $layer, string $schema): void
 }
 
 if (isset($argv[1])) {
-    if (count($argv) < 4) {
-        die("Usage:\n{$argv[0]} <inputSchema> <output> <outputJson>\nOR\n{$argv[0]} (no args, uses schemas in schemas folder)\n");
+    if (count($argv) < 5) {
+        die("Usage:\n{$argv[0]} <layer> <inputSchema> <output> <outputJson>\nOR\n{$argv[0]} (no args, uses schemas in schemas folder)\n");
     }
 
     FileRefGenerator::generate(
-        $argv[1],
-        $argv[1],
+        (int)$argv[1],
         $argv[2],
         $argv[3],
+        $argv[4],
     );
     die;
 }

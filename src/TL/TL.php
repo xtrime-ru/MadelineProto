@@ -1020,7 +1020,6 @@ final class TL implements TLInterface
                     ['type' => 'bytes'],
                 ),
             );
-            file_put_contents('/tmp/a', $x);
             return $this->deserialize(
                 $x,
                 ['type' => '', 'connection' => $type['connection'], 'subtype' => $type['subtype'], 'encrypted' => $type['encrypted']],

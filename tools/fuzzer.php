@@ -90,6 +90,7 @@ $settings = new Settings;
 $settings->setSchema($schema);
 $settings->getLogger()->setLevel(Logger::ULTRA_VERBOSE);
 
+echo "Unauthed:".PHP_EOL;
 $unauthed = new \danog\MadelineProto\API('fuzz_unauth.madeline');
 $unauthed->updateSettings($settings);
 Assert::false($unauthed->getSelf(), "fuzz_unauth.madeline is authed!");

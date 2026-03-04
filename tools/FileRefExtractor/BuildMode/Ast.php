@@ -58,7 +58,7 @@ final class Ast implements BuildMode
         return $id;
     }
 
-    public function finalize(array $outgoingCons, array $incomingCons, string $refMapFile, string $refMapFileJson): void
+    public function finalize(int $layer, array $outgoingCons, array $incomingCons, string $refMapFile, string $refMapFileJson): void
     {
         $locations = [];
 
@@ -102,11 +102,12 @@ final class Ast implements BuildMode
             $actions[] = $action;
         }
         $value = [
-            '_' => 'fileReferenceOrigins',
+            '_' => 'fileReferenceMap',
+            'layer' => $layer,
             'db_schema' => $dbSchema,
             'db_schema_json' => json_encode($dbSchemaJSON, flags: JSON_THROW_ON_ERROR),
             'locations' => $locations,
-            'origins' => $this->output,
+            'sources' => $this->output,
             'skipped' => $this->skipped,
             'actions' => $actions,
         ];
@@ -125,7 +126,7 @@ final class Ast implements BuildMode
             Assert::keyNotExists($this->blacklistedPredicates, $method['method'], "{$method['method']} is blacklisted and cannot be used in the schema");
         }
 
-        $serialized = $TL->serializeObject(['type' => 'FileReferenceOrigins'], $value, '');
+        $serialized = $TL->serializeObject(['type' => 'FileReferenceMap'], $value, '');
         $valueDe = $TL->deserialize($serialized, ['type' => '', 'connection' => null, 'encrypted' => true]);
         Assert::true($value == $valueDe);
         file_put_contents($refMapFile, $serialized);
@@ -258,7 +259,7 @@ final class Ast implements BuildMode
             }
 
             $out = [
-                '_' => 'origin',
+                '_' => 'source',
                 'predicate' => $ctx->position,
                 'is_constructor' => $ctx->isConstructor,
                 'stored_constructor' => $constructor,
@@ -278,7 +279,7 @@ final class Ast implements BuildMode
             Assert::null($why);
         } elseif ($why !== null) {
             $this->skipped[] = [
-                '_' => 'skippedOrigin',
+                '_' => 'skippedSource',
                 'why' => $why,
                 'predicate' => $ctx->position,
                 'is_constructor' => $ctx->isConstructor,

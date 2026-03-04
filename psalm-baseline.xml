@@ -6135,6 +6135,9 @@
     <MixedAssignment>
       <code><![CDATA[$unserialized]]></code>
     </MixedAssignment>
+    <MixedOperand>
+      <code><![CDATA[Magic::$can_use_igbinary ? igbinary_serialize($object) : serialize($object)]]></code>
+    </MixedOperand>
     <MixedReturnStatement>
       <code><![CDATA[$unserialized]]></code>
     </MixedReturnStatement>
