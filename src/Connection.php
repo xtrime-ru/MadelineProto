@@ -581,7 +581,6 @@ final class Connection
         $this->shared = $extra;
         $this->id = $id;
         $this->API = $extra->getExtra();
-        $this->API->logger = $this->API->logger;
         $this->datacenter = $datacenter;
         $this->datacenterId = $this->datacenter . '.' . $this->id;
     }
