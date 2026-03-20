@@ -21,11 +21,13 @@ namespace danog\MadelineProto\FileRefExtractor\BuildMode;
 use AssertionError;
 use danog\MadelineProto\FileRefExtractor\BuildMode;
 use danog\MadelineProto\FileRefExtractor\TLContext;
+use danog\MadelineProto\FileRefExtractor\TLWrapper;
 use danog\MadelineProto\Magic;
 use danog\MadelineProto\MTProto;
 use danog\MadelineProto\Settings\TLSchema;
 use danog\MadelineProto\TL\TL;
 use ReflectionClass;
+use SebastianBergmann\Diff\Differ;
 use Webmozart\Assert\Assert;
 
 final class Ast implements BuildMode
@@ -42,12 +44,22 @@ final class Ast implements BuildMode
     private array $skipped = [];
     private array $actions = [];
     private ?string $needsParent = null;
+    private array $needsParentList = [];
 
     public function __construct(
         private readonly array $blacklistedPredicates,
         public readonly bool $allowUnpacking,
         private array $outputSchema = []
     ) {
+    }
+
+    public function getSources(): array
+    {
+        return $this->output;
+    }
+    public function getNeedsParentList(): array
+    {
+        return $this->needsParentList;
     }
 
     public static function crc(string $schema): string
@@ -58,8 +70,16 @@ final class Ast implements BuildMode
         return $id;
     }
 
-    public function finalize(int $layer, array $outgoingCons, array $incomingCons, string $refMapFile, string $refMapFileJson): void
-    {
+    public function finalize(
+        TLWrapper $tl,
+        int $layer,
+        array $outgoingCons,
+        array $incomingCons,
+        array $incomingTraversalPairs,
+        array $outgoingTraversalPairs,
+        string $refMapFile,
+        string $refMapFileJson
+    ): void {
         $locations = [];
 
         $fileIdCons = [];
@@ -68,6 +88,7 @@ final class Ast implements BuildMode
             $locations[] = [
                 '_' => 'locationOutgoing',
                 'predicate' => $predicate,
+                'type' => $tl->getConstructorOrMethod($predicate)['type'],
                 //'id_field' => $id,
                 //'file_reference_field' => $fileref,
                 'stored_constructor' => $cons,
@@ -78,6 +99,7 @@ final class Ast implements BuildMode
             $locations[] = [
                 '_' => 'locationIncoming',
                 'predicate' => $predicate,
+                'type' => $tl->getConstructorOrMethod($predicate)['type'],
                 //'id_field' => $id,
                 //'file_reference_field' => $fileref,
                 'stored_constructor' => $cons,
@@ -106,10 +128,12 @@ final class Ast implements BuildMode
             'layer' => $layer,
             'db_schema' => $dbSchema,
             'db_schema_json' => json_encode($dbSchemaJSON, flags: JSON_THROW_ON_ERROR),
-            'locations' => $locations,
-            'sources' => $this->output,
-            'skipped' => $this->skipped,
-            'actions' => $actions,
+            //'locations' => $locations,
+            //'sources' => array_merge(...array_values($this->output)),
+            'traversers_incoming' => $incomingTraversalPairs,
+            'traversers_outgoing' => $outgoingTraversalPairs,
+            'skipped_incoming_sources' => $this->skipped,
+            'refresh_actions' => $actions,
         ];
         Magic::start(false);
 
@@ -128,7 +152,16 @@ final class Ast implements BuildMode
 
         $serialized = $TL->serializeObject(['type' => 'FileReferenceMap'], $value, '');
         $valueDe = $TL->deserialize($serialized, ['type' => '', 'connection' => null, 'encrypted' => true]);
-        Assert::true($value == $valueDe);
+        if ($value != $valueDe) {
+            $differ = new Differ;
+            $sortedValue = $this->sortKeysRecursive($value);
+            $sortedValueDe = $this->sortKeysRecursive($valueDe);
+            $diff = $differ->diff(
+                json_encode($sortedValue, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR),
+                json_encode($sortedValueDe, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR)
+            );
+            Assert::true(false, "Deserialized value does not match original value. Diff:\n$diff");
+        }
         file_put_contents($refMapFile, $serialized);
         file_put_contents($refMapFileJson, json_encode($valueDe, flags: JSON_THROW_ON_ERROR));
     }
@@ -252,7 +285,7 @@ final class Ast implements BuildMode
                 $this->actions[$constructor]['action'] = $existingAction;
             } else {
                 $this->actions[$constructor] = [
-                    '_' => 'action',
+                    '_' => 'refreshAction',
                     'stored_constructor' => $constructor,
                     'action' => $action,
                 ];
@@ -270,8 +303,9 @@ final class Ast implements BuildMode
             if ($this->needsParent !== null) {
                 $out['needs_parent'] = $this->needsParent;
                 $out['parent_is_constructor'] = $ctx->tl->isConstructor($this->needsParent);
+                $this->needsParentList[$this->needsParent] = true;
             }
-            $this->output[] = $out;
+            $this->output[$ctx->position][] = $out;
 
             $this->storedFlags = 0;
             $this->stored = [];
@@ -306,5 +340,15 @@ final class Ast implements BuildMode
             throw new \LogicException("Cannot change needsParent from {$this->needsParent} to {$needsParent} once it has been set.");
         }
         $this->needsParent = $needsParent;
+    }
+    private function sortKeysRecursive(array &$array): array
+    {
+        ksort($array);
+        foreach ($array as $key => $value) {
+            if (\is_array($value)) {
+                $array[$key] = $this->sortKeysRecursive($value);
+            }
+        }
+        return $array;
     }
 }

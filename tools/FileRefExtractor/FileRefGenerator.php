@@ -444,22 +444,30 @@ final class FileRefGenerator
 
         $locations['account.uploadTheme'][] = new Noop('A freshly uploaded theme file will obtain a context only once it is created via account.createTheme');
 
-        $recurse = static function (Closure $onStackEnd, string $type, array &$stack, array &$stackTypes) use ($TL, &$recurse): void {
-            if ($type === 'Update' || $type === 'Updates') {
-                $onStackEnd($stack);
-                return;
-            }
-            if ($type === 'PeerStories') {
-                $onStackEnd($stack);
+        $constructorList = $TL->tl->getConstructors()->by_id;
+        $mergedConstructorMethods = [
+            ...$constructorList,
+            ...$TL->tl->getMethods()->by_id,
+        ];
+        $recurse = static function (Closure $onStackEnd, string $type, array &$stack, array &$stackTypes, bool $incoming) use ($TL, &$recurse, $mergedConstructorMethods, $constructorList): void {
+            if ($incoming) {
+                if ($type === 'Update' || $type === 'Updates') {
+                    $onStackEnd($stack);
+                    return;
+                }
+                if ($type === 'PeerStories') {
+                    $onStackEnd($stack);
+                }
             }
 
             $pos = \count($stack);
-            foreach ([...$TL->tl->getConstructors()->by_id, ...$TL->tl->getMethods()->by_id] as $constructor) {
+            foreach ($incoming ? $constructorList : $mergedConstructorMethods as $constructor) {
                 $predicate = $constructor['predicate'] ?? $constructor['method'];
                 if ($predicate === 'updateShortMessage' || $predicate === 'updateShortChatMessage' || $predicate === 'updateShortSentMessage') {
                     // Assume these are converted to message constructors by the client.
                     continue;
                 }
+                $isMethod = isset($constructor['method']);
                 $t = $constructor['type'];
                 $stackTypes[$t] ??= 0;
                 if ($stackTypes[$t] > 1) {
@@ -474,7 +482,7 @@ final class FileRefGenerator
                             && $param['subtype'] === $type
                         )
                     )) {
-                        $stack[$pos] = [$predicate, $param['name']];
+                        $stack[$pos] = [$predicate, $param['name'], 0];
                         if (isset($param['pow'])) {
                             $stack[$pos][2] = Path::FLAG_IF_ABSENT_ABORT;
                         }
@@ -482,20 +490,29 @@ final class FileRefGenerator
                             $oldFlag = $stack[$pos][2] ?? 0;
                             $stack[$pos][2] = $oldFlag | Path::FLAG_UNPACK_ARRAY;
                         }
-                        $recurse($onStackEnd, $t, $stack, $stackTypes);
+                        if ($isMethod) {
+                            if (!$incoming) {
+                                $onStackEnd($stack);
+                            }
+                        } else {
+                            $recurse($onStackEnd, $t, $stack, $stackTypes, $incoming);
+                        }
                         unset($stack[$pos]);
 
                     }
                 }
                 $stackTypes[$t]--;
             }
-            foreach ($TL->getMethodsOfType($type, true) as $method => $data) {
-                $stack[$pos] = [$method, ''];
-                $onStackEnd($stack);
-            }
-            foreach ($TL->getMethodsOfType("Vector<$type>", true) as $method => $data) {
-                $stack[$pos] = [$method, '', Path::FLAG_UNPACK_ARRAY];
-                $onStackEnd($stack);
+
+            if ($incoming) {
+                foreach ($TL->getMethodsOfType($type, true) as $method => $data) {
+                    $stack[$pos] = [$method, '', 0];
+                    $onStackEnd($stack);
+                }
+                foreach ($TL->getMethodsOfType("Vector<$type>", true) as $method => $data) {
+                    $stack[$pos] = [$method, '', Path::FLAG_UNPACK_ARRAY];
+                    $onStackEnd($stack);
+                }
             }
             unset($stack[$pos]);
         };
@@ -566,14 +583,44 @@ final class FileRefGenerator
             }
         }
 
-        $traversalPairs = [];
+        $outgoingTraversalPairsByCons = [];
+        foreach ($outgoingCons as $constructor => $contents) {
+            if ($contents === false) {
+                continue;
+            }
+            $type = $TL->tl->getConstructors()->findByPredicate($constructor)['type'];
+            $stack = [[$constructor, 'file_reference', 0]];
+            $stackTypes = [$type => 1];
+
+            $outgoingTraversalPairs = [];
+            $recurse(
+                static function (array $stack) use (&$outgoingTraversalPairs): void {
+                    foreach ($stack as $pair) {
+                        if ($pair[1] === 'file_reference') {
+                            continue;
+                        }
+                        $outgoingTraversalPairs[$pair[0]][$pair[1]] = $pair;
+                    }
+                },
+                $type,
+                $stack,
+                $stackTypes,
+                false,
+            );
+            $outgoingTraversalPairsByCons[$constructor] = $outgoingTraversalPairs;
+        }
+        unset($outgoingTraversalPairs);
+
+        $incomingTraversalPairsByCons = [];
         $tmp = new Ast(blacklistedPredicates: $blacklistedPredicates, allowUnpacking: true, outputSchema: $pre);
         foreach ($incomingCons as $constructor => $_) {
             $type = ucfirst($constructor);
-            $stack = [[$constructor, 'file_reference']];
+            $stack = [[$constructor, 'file_reference', 0]];
             $stackTypes = [$type => 1];
+
+            $incomingTraversalPairs = [];
             $recurse(
-                static function (array $stack) use ($locations, $TL, $tmp, &$traversalPairs, &$validated, $storyMethods, $starMethods, $stickerMethods): void {
+                static function (array $stack) use ($locations, $TL, $tmp, &$incomingTraversalPairs, &$validated, $storyMethods, $starMethods, $stickerMethods): void {
                     $slice = [];
                     $hadAny = false;
                     $hadAnyNotNoop = false;
@@ -583,6 +630,11 @@ final class FileRefGenerator
                     $top = end($stack)[0];
                     for ($x = \count($stack)-1; $x >= 0; $x--) {
                         $pair = $stack[$x];
+
+                        if ($pair[1] !== 'file_reference') {
+                            $tmpPairs[$pair[0]][$pair[1]] = $pair;
+                        }
+
                         foreach ($locations[$pair[0]] ?? [] as $op) {
                             $normalized = $op->normalize($slice, $pair[0], false);
                             if ($normalized === null) {
@@ -591,7 +643,6 @@ final class FileRefGenerator
                             if (!$normalized instanceof Noop) {
                                 $hadAnyNotNoop = true;
                             }
-                            $tmpPairs[json_encode($pair)] = $pair;
                             $hadAny = true;
                             $normalized->build(new TLContext($TL, $tmp, $top, $TL->isConstructor($top)));
                             $validated[$pair[0]][spl_object_id($op)] = $op;
@@ -606,7 +657,12 @@ final class FileRefGenerator
                         $slice[] = $pair;
                     }
                     if ($hadAnyNotNoop) {
-                        $traversalPairs += $tmpPairs;
+                        foreach ($tmpPairs as $cons => $fields) {
+                            $incomingTraversalPairs[$cons] ??= [];
+                            foreach ($fields as $field => $part) {
+                                $incomingTraversalPairs[$cons][$field] = $part;
+                            }
+                        }
                     }
                     if (!$hadAny) {
                         throw new AssertionError("Uncovered path: " . json_encode($stack));
@@ -653,9 +709,11 @@ final class FileRefGenerator
                 $type,
                 $stack,
                 $stackTypes,
+                true,
             );
+            $incomingTraversalPairsByCons[$constructor] = $incomingTraversalPairs;
         }
-        //var_dump(array_values($traversalPairs));
+        unset($incomingTraversalPairs);
 
         $diff = [];
         foreach ($locations as $constructor => $ops) {
@@ -680,8 +738,168 @@ final class FileRefGenerator
             }
         }
 
-        $output->finalize($layer, array_filter($outgoingCons), $incomingCons, $outputFile, $outputFileJson);
+        $outgoingCons = array_filter($outgoingCons);
+        $output->finalize(
+            $TL,
+            $layer,
+            $outgoingCons,
+            $incomingCons,
+            self::fixupTraversalPairs($output, $TL, $incomingCons, $incomingTraversalPairsByCons, true),
+            self::fixupTraversalPairs($output, $TL, $outgoingCons, $outgoingTraversalPairsByCons, false),
+            $outputFile,
+            $outputFileJson
+        );
 
         echo("OK $layer!\n".PHP_EOL);
+    }
+
+    public static function fixupTraversalPairs(Ast $output, TLWrapper $TL, array $locations, array $pairsByCons, bool $isIncoming): array
+    {
+        $pairsMerged = [];
+        foreach ($pairsByCons as $parentCons => $pairs) {
+            foreach ($pairs as $cons => $fields) {
+                Assert::notEmpty($fields, "No fields for $cons in $parentCons");
+                foreach ($fields as $field => $part) {
+                    $pairsMerged[$cons][$field] = $part;
+                }
+            }
+        }
+
+        if ($isIncoming) {
+            $sources = $output->getSources();
+            $parents = $output->getNeedsParentList();
+        }
+
+        $fixed = [];
+        foreach ($locations as $predicate => [$cons]) {
+            if ($isIncoming) {
+                $fixed []= [
+                    '_' => 'traverseCommitSourceLocation',
+                    'type' => $TL->getConstructorOrMethod($predicate)['type'],
+                    'predicate' => $predicate,
+                    'stored_constructor' => $cons,
+                    'push_sources' => $sources[$predicate] ?? [],
+                ];
+                unset($sources[$predicate]);
+            } else {
+                $fixed []= [
+                    '_' => 'traverseSwapLocation',
+                    'type' => $TL->getConstructorOrMethod($predicate)['type'],
+                    'predicate' => $predicate,
+                    'stored_constructor' => $cons,
+                ];
+            }
+        }
+
+        foreach ($pairsMerged as $cons => $fields) {
+
+            $consIsConstructor = $TL->isConstructor($cons);
+            $order = [];
+            $paramTypes = [];
+            foreach ($TL->getConstructorOrMethod($cons)['params'] as $idx => $param) {
+                $order[$param['name']] = $idx;
+                $paramTypes[$param['name']] = $param['subtype'] ?? $param['type'];
+            }
+
+            $newFields = [];
+            $hasReturn = false;
+            foreach ($fields as $field => $part) {
+                if ($field === '') {
+                    $hasReturn = true;
+                    continue;
+                }
+                $newPart = [
+                    '_' => 'traverseParam',
+                    'name' => $field,
+                    'type' => $paramTypes[$field],
+                    'is_vector' => false,
+                    'is_flag' => false,
+                ];
+                if (isset($part[2])) {
+                    if ($part[2] instanceof TypedOp) {
+                        throw new \InvalidArgumentException('Cannot use TypedOp in traverse path');
+                    } elseif (\is_int($part[2])) {
+                        if ($part[2] & Path::FLAG_UNPACK_ARRAY) {
+                            $newPart['is_vector'] = true;
+                        }
+                        if ($part[2] & Path::FLAG_IF_ABSENT_ABORT) {
+                            $newPart['is_flag'] = true;
+                        }
+                        if ($part[2] & Path::FLAG_PASSTHROUGH) {
+                            $newPart['is_flag'] = true;
+                        }
+                    }
+                }
+                $newFields[] = $newPart;
+            }
+            usort($newFields, static fn ($a, $b) => $order[$a['name']] <=> $order[$b['name']]);
+
+            if ($isIncoming) {
+                if ($consIsConstructor) {
+                    Assert::false($hasReturn, "Constructor $cons has a return value, cannot be used in incoming traversal");
+                    Assert::notEmpty($newFields, "Constructor $cons does not have fields in traversal pairs but is used as a constructor");
+
+                    $consT = $TL->getConstructorOrMethod($cons)['type'];
+                    Assert::notEq($consT, 'Updates', "Constructor $cons has type Updates, cannot be used in incoming traversal as it is not a message/container constructor");
+
+                    $fixed[] = [
+                        '_' => 'traverseIncomingConstructor',
+                        'predicate' => $cons,
+                        'type' => $consT,
+                        'params' => $newFields,
+                        'push_sources' => $sources[$cons] ?? [],
+                        'is_needed_parent' => isset($parents[$cons]),
+                    ];
+                    unset($sources[$cons], $parents[$cons]);
+
+                } else {
+                    Assert::notEmpty($hasReturn, "Method $cons does not have a return value, cannot be used in incoming traversal");
+                    Assert::isEmpty($newFields, "Method $cons has fields in traversal pairs but is used as a method result");
+
+                    $fixed[] = [
+                        '_' => 'traverseMethodResult',
+                        'name' => $cons,
+                        'push_sources' => $sources[$cons] ?? [],
+                        'is_needed_parent' => isset($parents[$cons]),
+                    ];
+                    unset($sources[$cons], $parents[$cons]);
+
+                }
+            } else {
+                if ($consIsConstructor) {
+                    Assert::false($hasReturn, "Constructor $cons has a return value, cannot be used in outgoing traversal");
+                    Assert::notEmpty($newFields, "Constructor $cons does not have fields in traversal pairs but is used as a constructor");
+
+                    $fixed[] = [
+                        '_' => 'traverseOutgoingConstructor',
+                        'predicate' => $cons,
+                        'type' => $TL->getConstructorOrMethod($cons)['type'],
+                        'params' => $newFields,
+                    ];
+                } else {
+                    Assert::false($hasReturn, "Method $cons has a return value, cannot be used in outgoing traversal");
+                    Assert::notEmpty($newFields, "Method $cons does not have fields in traversal pairs but is used as a method call");
+
+                    $fixed[] = [
+                        '_' => 'traverseMethodCall',
+                        'name' => $cons,
+                        'params' => $newFields,
+                    ];
+                }
+            }
+        }
+
+        if ($isIncoming) {
+            foreach ($sources as $cons => $sourceList) {
+                foreach ($sourceList as $source) {
+                    $source = json_encode($source);
+                    throw new AssertionError("Source $source for $cons was not included in traversal pairs");
+                }
+            }
+            foreach ($parents as $cons => $_) {
+                throw new AssertionError("Needed parent $cons was not included in traversal pairs");
+            }
+        }
+        return $fixed;
     }
 }

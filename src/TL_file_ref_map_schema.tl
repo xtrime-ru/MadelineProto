@@ -5,16 +5,27 @@ true#3fedd339 = True;
 vector#1cb5c415 {t:Type} # [ t ] = Vector t;
 
 // Root
-fileReferenceMap#28834873 layer:int db_schema:string db_schema_json:string locations:Vector<Location> sources:Vector<Source> skipped:Vector<SkippedSource> actions:Vector<Action> = FileReferenceMap;
+fileReferenceMap#72a99250 layer:int db_schema:string db_schema_json:string traversers_incoming:Vector<TraverserIncoming> traversers_outgoing:Vector<TraverserOutgoing> refresh_actions:Vector<RefreshAction> skipped_incoming_sources:Vector<SkippedSource> = FileReferenceMap;
 
-locationIncoming#e18770f4 predicate:string stored_constructor:string = Location;
-locationOutgoing#e7740ae0 predicate:string stored_constructor:string = Location;
+// Traversers (incoming)
+traverseParam#62161b67 flags:# name:string is_flag:flags.0?true is_vector:flags.1?true type:string = TraverseParam;
+
+traverseMethodResult#fda9f236 name:string push_sources:Vector<Source> is_needed_parent:Bool = TraverserIncoming;
+traverseIncomingConstructor#6e4d00b6 type:string predicate:string params:Vector<TraverseParam> push_sources:Vector<Source> is_needed_parent:Bool = TraverserIncoming;
+traverseCommitSourceLocation#94cc59c5 type:string predicate:string push_sources:Vector<Source> stored_constructor:string = TraverserIncoming;
 
 source#dd27c696 flags:# predicate:string is_constructor:flags.0?true stored_constructor:string stored_params:Vector<FieldExtractor> skipped_flags:Vector<string> needs_parent:flags.3?string parent_is_constructor:flags.4?true = Source;
 
+// Traversers (outgoing)
+traverseOutgoingConstructor#3fc5026d type:string predicate:string params:Vector<TraverseParam> = TraverserOutgoing;
+traverseSwapLocation#032bf95d type:string predicate:string stored_constructor:string = TraverserOutgoing;
+traverseMethodCall#9244f5bb name:string params:Vector<TraverseParam> = TraverserOutgoing;
+
+// Skipped sources
 skippedSource#1d53cd15 flags:# predicate:string is_constructor:flags.0?true why:string = SkippedSource;
 
-action#9539f410 stored_constructor:string action:ActionOp = Action;
+// Refresh actions
+refreshAction#d4e15689 stored_constructor:string action:ActionOp = RefreshAction;
 
 // Field extraction path
 paramNotFlag#acd9d5cf = ParamFlag;
@@ -22,7 +33,7 @@ paramIsFlagAbortIfEmpty#f8fe9fee = ParamFlag;
 paramIsFlagFallback#202b77a1 fallback:TypedOp = ParamFlag;
 paramIsFlagPassthrough#1dc6e17d = ParamFlag;
 
-pathPart#8dc6ff46 constructor:string param:string flag:ParamFlag = PathPart;
+pathPart#19a10fbf type:string constructor:string param:string param_type:string flag:ParamFlag = PathPart;
 
 path#0c3586a2 parts:Vector<PathPart> = Path;
 pathParent#58f13684 parts:Vector<PathPart> = Path;

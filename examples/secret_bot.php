@@ -54,12 +54,8 @@ class SecretHandler extends SimpleEventHandler
     {
         return [self::ADMIN];
     }
-    private $call;
     public function onStart(): void
     {
-        $this->call = $this->requestCall(self::ADMIN)->play(
-            new LocalFile('/home/daniil/Music/a.ogg')
-        );
     }
     /**
      * Handle updates from users.

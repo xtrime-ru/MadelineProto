@@ -90,11 +90,15 @@ final readonly class Path
     public function buildPath(TLContext $tl, string $extractor): string
     {
         $new = [];
+        $finalK = \count($this->path) - 1;
         foreach ($this->path as $k => $part) {
+            $consType = $tl->tl->getConstructorOrMethod($part[0])['type'];
             $newPart = [
                 '_' => 'pathPart',
+                'type' => $consType,
                 'constructor' => $part[0],
                 'param' => $part[1],
+                'param_type' => $part[1] === '' ? $consType : $tl->tl->getParamType($part[0], $part[1]),
                 'flag' => ['_' => 'paramNotFlag'],
             ];
             if (isset($part[2])) {
@@ -120,13 +124,15 @@ final readonly class Path
                         $newPart['flag'] = ['_' => 'paramIsFlagAbortIfEmpty'];
                     }
                     if ($part[2] & self::FLAG_PASSTHROUGH) {
-                        Assert::eq($k, \count($this->path) - 1, 'Can only use passthrough flag on last element');
+                        Assert::eq($k, $finalK, 'Can only use passthrough flag on last element');
                         $newPart['flag'] = ['_' => 'paramIsFlagPassthrough'];
                     }
                 }
             }
-            $new[] = $newPart;
+            $new []= $newPart;
         }
+        $newPart = end($new);
+
         $serialized = json_encode([$extractor, $this->isFromParent, $new], flags: JSON_THROW_ON_ERROR);
         if (isset($tl->buildMode->storedByPath[$serialized])) {
             $name = $tl->buildMode->storedByPath[$serialized];

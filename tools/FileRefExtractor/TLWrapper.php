@@ -43,6 +43,27 @@ final class TLWrapper
         $this->methodsOfType = $methodsOfType;
     }
 
+    public function getParamType(string $constructorOrMethod, string $param): string
+    {
+        foreach ($this->getConstructorOrMethod($constructorOrMethod)['params'] as $p) {
+            if ($p['name'] === $param) {
+                return $p['subtype'] ?? $p['type'];
+            }
+        }
+        throw new \InvalidArgumentException("No parameter of name $param found for constructor or method: $constructorOrMethod");
+    }
+    public function getConstructorOrMethod(string $name): array
+    {
+        $constructor = $this->tl->getConstructors()->findByPredicate($name);
+        if ($constructor) {
+            return $constructor;
+        }
+        $method = $this->tl->getMethods()->findByMethod($name);
+        if ($method) {
+            return $method;
+        }
+        throw new \InvalidArgumentException("No constructor or method found with name: $name");
+    }
     public function isConstructor(string $constructor): bool
     {
         return (bool) $this->tl->getConstructors()->findByPredicate($constructor);
