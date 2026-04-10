@@ -362,9 +362,9 @@ class MTProtoOutgoingMessage extends MTProtoMessage
     /**
      * Get serialized body.
      */
-    public function getSerializedBody(): ?string
+    public function getSerializedBody(): string
     {
-        return $this->serializedBody;
+        return (string)$this->serializedBody;
     }
     /**
      * Check if we have a serialized body.

@@ -295,6 +295,10 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                     $has_resend = true;
                 }
 
+                if (!$message->hasBody()) {
+                    $this->API->logger("Message has null body: " . var_export($message, true), Logger::ERROR);
+                }
+
                 $body_length = \strlen($message->getSerializedBody());
                 $actual_length = $body_length + 32;
                 if ($total_length && $total_length + $actual_length > 32760 || $count >= self::MAX_COUNT) {
