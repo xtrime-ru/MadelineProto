@@ -57,6 +57,7 @@ abstract class MessageEntity implements JsonSerializable
             'bank_card', 'messageEntityBankCard' => new BankCard($entity['offset'], $entity['length']),
             'spoiler', 'messageEntitySpoiler' => new Spoiler($entity['offset'], $entity['length']),
             'custom_emoji', 'messageEntityCustomEmoji' => new CustomEmoji($entity['offset'], $entity['length'], $entity['document_id'] ?? $entity['custom_emoji_id']),
+            'date_time', 'messageEntityFormattedDate' => new FormattedDate($entity['offset'], $entity['length'], $entity['date'] ?? $entity['unix_time']),
             default => throw new AssertionError("Unknown entity type: ".($entity['_'] ?? $entity['type']))
         };
     }
