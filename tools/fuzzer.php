@@ -86,6 +86,21 @@ if ($auth) {
     echo "No TELERPC_AUTH_TOKEN set, not cleaning up old reports".PHP_EOL;
 }
 
+if ($auth) {
+    $layerNumber = $schema->getLayer();
+    $res = json_decode(
+        (
+            $client
+                ->request(new Request('https://report-rpc-error.madelineproto.xyz/?auth='.$auth.'&setLayer='.$layerNumber))
+        )->getBody()->buffer(),
+        true,
+    );
+    Assert::true($res['ok']);
+    echo "Set layer number to $layerNumber".PHP_EOL;
+} else {
+    echo "No TELERPC_AUTH_TOKEN set, not setting layer number".PHP_EOL;
+}
+
 $settings = new Settings;
 $settings->setSchema($schema);
 $settings->getLogger()->setLevel(Logger::ULTRA_VERBOSE);

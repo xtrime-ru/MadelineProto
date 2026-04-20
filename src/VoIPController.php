@@ -53,7 +53,7 @@ final class VoIPController
         'udp_reflector' => true,
         'min_layer' => 65,
         'max_layer' => 92,
-        'library_versions' => [
+        /*'library_versions' => [
             "2.4.4",
             "2.7.7",
             "5.0.0",
@@ -63,7 +63,7 @@ final class VoIPController
             "9.0.0",
             "10.0.0",
             "11.0.0",
-        ],
+        ],*/
     ];
     public const NET_TYPE_UNKNOWN = 0;
     public const NET_TYPE_GPRS = 1;
@@ -382,10 +382,10 @@ final class VoIPController
 
     public function onSignaling(string $data): void
     {
-        if ($this->tgcallsController === null) {
+        /*if ($this->tgcallsController === null) {
             throw new Exception('Protocol version is not set!');
         }
-        $this->tgcallsController->onSignaling($data);
+        $this->tgcallsController->onSignaling($data);*/
     }
 
     /**

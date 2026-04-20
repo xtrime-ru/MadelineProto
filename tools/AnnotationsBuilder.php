@@ -149,6 +149,9 @@ final class Blacklist {
             'JSONValue' => 'mixed',
             default => $this->special[$type] ?? ''
         };
+        if ($type === 'PollResults') {
+            return 'array';
+        }
         if ($type === 'channels.AdminLogResults') {
             $depth = 3;
         }

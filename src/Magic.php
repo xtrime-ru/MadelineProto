@@ -252,14 +252,15 @@ final class Magic
             self::$isIpcWorker = \defined('MADELINE_WORKER_TYPE') ? MADELINE_WORKER_TYPE === 'madeline-ipc' : false;
             // Important, obtain root relative to caller script
             $backtrace = debug_backtrace(0);
-            
+
             $last_entry = end($backtrace);
             $_cwd = '/tmp';
-            if (array_key_exists('file', $last_entry))
-              $_cwd = \dirname($last_entry['file']);
-            else {
-              if (preg_match('/^\{closure\:(.+?)\:/ui', $last_entry['function'], $m))
-                $_cwd = \dirname($m[1]);
+            if (\array_key_exists('file', $last_entry)) {
+                $_cwd = \dirname($last_entry['file']);
+            } else {
+                if (preg_match('/^\{closure\:(.+?)\:/ui', $last_entry['function'], $m)) {
+                    $_cwd = \dirname($m[1]);
+                }
             }
 
             self::$script_cwd = self::$cwd = $_cwd;
