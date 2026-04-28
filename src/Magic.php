@@ -255,7 +255,7 @@ final class Magic
 
             $last_entry = end($backtrace);
             $_cwd = '/tmp';
-            if (\array_key_exists('file', $last_entry)) {
+            if (\array_key_exists('file', $last_entry) && $last_entry['file'] !== null) {
                 $_cwd = \dirname($last_entry['file']);
             } else {
                 if (preg_match('/^\{closure\:(.+?)\:/ui', $last_entry['function'], $m)) {
