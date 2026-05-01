@@ -416,6 +416,9 @@ final class DataCenter
     }
     public function has(int $dc): bool
     {
+        if (!isset($this->list[$dc])) {
+            return false;
+        }
         $test = $this->getSettings()->getTestMode() ? 'test' : 'main';
         $ipv6 = $this->getSettings()->getIpv6() ? 'ipv6' : 'ipv4';
         return isset($this->API->dcList[$test][$ipv6][$dc]);
