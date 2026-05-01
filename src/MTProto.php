@@ -1586,12 +1586,16 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             if ($this->config['test_mode']) {
                 $id += 10000;
             }
-            if ($dc['media_only']) {
+            $mediaOnly = $dc['media_only'];
+            if ($mediaOnly) {
                 $id = -$id;
             }
             $ipv6 = $dc['ipv6'] ? 'ipv6' : 'ipv4';
             unset($dc['media_only'], $dc['id'], $dc['ipv6']);
             $new[$test][$ipv6][$id] = $dc;
+            if (!$mediaOnly) {
+                $new[$test][$ipv6][-$id] = $dc;
+            }
         }
         $this->dcList = $new;
     }
