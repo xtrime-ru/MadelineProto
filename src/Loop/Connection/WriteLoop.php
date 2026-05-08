@@ -296,7 +296,7 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                 }
 
                 if (!$message->hasBody()) {
-                    $this->API->logger("Message has null body: " . var_export($message, true), Logger::ERROR);
+                    $this->API->logger("Message has null body: " . json_encode($message, JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT), Logger::ERROR);
                 }
 
                 $body_length = \strlen($message->getSerializedBody());
