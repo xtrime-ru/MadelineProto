@@ -75,6 +75,8 @@ use danog\MadelineProto\EventHandler\Message\Service\DialogMemberJoinedByRequest
 use danog\MadelineProto\EventHandler\Message\Service\DialogMemberLeft;
 use danog\MadelineProto\EventHandler\Message\Service\DialogMembersJoined;
 use danog\MadelineProto\EventHandler\Message\Service\DialogMessagePinned;
+use danog\MadelineProto\EventHandler\Message\Service\DialogNoForwardRequest;
+use danog\MadelineProto\EventHandler\Message\Service\DialogNoForwardToggle;
 use danog\MadelineProto\EventHandler\Message\Service\DialogPaymentSent;
 use danog\MadelineProto\EventHandler\Message\Service\DialogPaymentSentMe;
 use danog\MadelineProto\EventHandler\Message\Service\DialogPeerRequested;
@@ -808,6 +810,21 @@ trait UpdateHandler
                     $info,
                     new Wallpaper($this, $message['action']['wallpaper']),
                     true
+                ),
+                'messageActionNoForwardsRequest' => new DialogNoForwardRequest(
+                    $this,
+                    $message,
+                    $info,
+                    $message['action']['expired'],
+                    $message['action']['prev_value'],
+                    $message['action']['new_value'],
+                ),
+                'messageActionNoForwardsToggle' => new DialogNoForwardToggle(
+                    $this,
+                    $message,
+                    $info,
+                    $message['action']['prev_value'],
+                    $message['action']['new_value'],
                 ),
                 default => null
             };
