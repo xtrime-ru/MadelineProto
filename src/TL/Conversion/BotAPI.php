@@ -50,6 +50,21 @@ trait BotAPI
             $newrows[$key] = ['_' => 'keyboardButtonRow', 'buttons' => []];
             foreach ($row as $button) {
                 $newrows[$key]['buttons'][$button_key] = ['_' => 'keyboardButton', 'text' => $button['text']];
+                if (isset($button['style']) || isset($button['icon_custom_emoji_id'])) {
+                    $newrows[$key]['buttons'][$button_key]['style']['_'] = 'keyboardButtonStyle';
+                    $bgKey = match ($button['style'] ?? null) {
+                        'primary' => 'bg_primary',
+                        'danger'  => 'bg_danger',
+                        'success' => 'bg_success',
+                        default   => null,
+                    };
+                    if ($bgKey !== null) {
+                        $newrows[$key]['buttons'][$button_key]['style'][$bgKey] = true;
+                    }
+                    if (isset($button['icon_custom_emoji_id'])) {
+                        $newrows[$key]['buttons'][$button_key]['style']['icon'] = $button['icon_custom_emoji_id'];
+                    }
+                }
                 if (isset($button['url'])) {
                     if (str_starts_with($button['url'], 'tg://user?id=')) {
                         $newrows[$key]['buttons'][$button_key]['_'] = 'inputKeyboardButtonUserProfile';
@@ -100,7 +115,9 @@ trait BotAPI
                     if ($button['allow_channel_chats'] ?? false) {
                         $peer_types []= ['_' => 'inlineQueryPeerTypeBroadcast'];
                     }
-                    $newrows[$key]['buttons'][$button_key]['peer_types'] = $peer_types;
+                    if (!empty($peer_types)) {
+                        $newrows[$key]['buttons'][$button_key]['peer_types'] = $peer_types;
+                    }
                 } elseif (isset($button['switch_inline_query_current_chat'])) {
                     $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonSwitchInline';
                     $newrows[$key]['buttons'][$button_key]['same_peer'] = true;

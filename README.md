@@ -171,6 +171,8 @@ Some of MadelineProto's core components are also available as separate, standalo
   * [danog\MadelineProto\EventHandler\Message\Service\DialogMemberLeft &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogMemberLeft.html) - A member left the chat or channel.
   * [danog\MadelineProto\EventHandler\Message\Service\DialogMembersJoined &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogMembersJoined.html) - Some members joined the chat or channel.
   * [danog\MadelineProto\EventHandler\Message\Service\DialogMessagePinned &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogMessagePinned.html) - A message was pinned in a chat.
+  * [danog\MadelineProto\EventHandler\Message\Service\DialogNoForwardRequest &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogNoForwardRequest.html) - Emitted only in private chats if the other side requested to disable content protection ».
+  * [danog\MadelineProto\EventHandler\Message\Service\DialogNoForwardToggle &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogNoForwardToggle.html) - Emitted only in private chats when enabling or disabling content protection ».
   * [danog\MadelineProto\EventHandler\Message\Service\DialogPaymentSent &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogPaymentSent.html) - A payment was sent.
   * [danog\MadelineProto\EventHandler\Message\Service\DialogPaymentSentMe &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogPaymentSentMe.html) - A user just sent a payment to me (a bot).
   * [danog\MadelineProto\EventHandler\Message\Service\DialogPeerRequested &raquo;](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Message/Service/DialogPeerRequested.html) - Contains info about a peer that the user shared with the bot after clicking on a [keyboardButtonRequestPeer](https://docs.madelineproto.xyz/API_docs/constructors/keyboardButtonRequestPeer.html) button.
@@ -1259,13 +1261,22 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.getPasskeys.html" name="account.getPasskeys">account.getPasskeys</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.initPasskeyRegistration.html" name="account.initPasskeyRegistration">account.initPasskeyRegistration</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.registerPasskey.html" name="account.registerPasskey">account.registerPasskey</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.createTone.html" name="aicompose.createTone">aicompose.createTone</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.deleteTone.html" name="aicompose.deleteTone">aicompose.deleteTone</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.getTone.html" name="aicompose.getTone">aicompose.getTone</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.getToneExample.html" name="aicompose.getToneExample">aicompose.getToneExample</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.getTones.html" name="aicompose.getTones">aicompose.getTones</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.saveTone.html" name="aicompose.saveTone">aicompose.saveTone</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.updateTone.html" name="aicompose.updateTone">aicompose.updateTone</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.checkPaidAuth.html" name="auth.checkPaidAuth">auth.checkPaidAuth</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.finishPasskeyLogin.html" name="auth.finishPasskeyLogin">auth.finishPasskeyLogin</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.initPasskeyLogin.html" name="auth.initPasskeyLogin">auth.initPasskeyLogin</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#base64urlDecode" name="base64urlDecode">base64URL decode: base64urlDecode</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.checkUsername.html" name="bots.checkUsername">bots.checkUsername</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.createBot.html" name="bots.createBot">bots.createBot</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.editAccessSettings.html" name="bots.editAccessSettings">bots.editAccessSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.exportBotToken.html" name="bots.exportBotToken">bots.exportBotToken</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getAccessSettings.html" name="bots.getAccessSettings">bots.getAccessSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getRequestedWebViewButton.html" name="bots.getRequestedWebViewButton">bots.getRequestedWebViewButton</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.requestWebViewButton.html" name="bots.requestWebViewButton">bots.requestWebViewButton</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.updateContactNote.html" name="contacts.updateContactNote">contacts.updateContactNote</a>
@@ -1274,6 +1285,8 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.composeMessageWithAI.html" name="messages.composeMessageWithAI">messages.composeMessageWithAI</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.createForumTopic.html" name="messages.createForumTopic">messages.createForumTopic</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.declineUrlAuth.html" name="messages.declineUrlAuth">messages.declineUrlAuth</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.deleteParticipantReaction.html" name="messages.deleteParticipantReaction">messages.deleteParticipantReaction</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.deleteParticipantReactions.html" name="messages.deleteParticipantReactions">messages.deleteParticipantReactions</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.deletePollAnswer.html" name="messages.deletePollAnswer">messages.deletePollAnswer</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.deleteTopicHistory.html" name="messages.deleteTopicHistory">messages.deleteTopicHistory</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.editChatCreator.html" name="messages.editChatCreator">messages.editChatCreator</a>
@@ -1283,11 +1296,13 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getForumTopics.html" name="messages.getForumTopics">messages.getForumTopics</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getForumTopicsByID.html" name="messages.getForumTopicsByID">messages.getForumTopicsByID</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getFutureChatCreatorAfterLeave.html" name="messages.getFutureChatCreatorAfterLeave">messages.getFutureChatCreatorAfterLeave</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getPersonalChannelHistory.html" name="messages.getPersonalChannelHistory">messages.getPersonalChannelHistory</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getUnreadPollVotes.html" name="messages.getUnreadPollVotes">messages.getUnreadPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.readPollVotes.html" name="messages.readPollVotes">messages.readPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reorderPinnedForumTopics.html" name="messages.reorderPinnedForumTopics">messages.reorderPinnedForumTopics</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reportMusicListen.html" name="messages.reportMusicListen">messages.reportMusicListen</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reportReadMetrics.html" name="messages.reportReadMetrics">messages.reportReadMetrics</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.setBotGuestChatResult.html" name="messages.setBotGuestChatResult">messages.setBotGuestChatResult</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.summarizeText.html" name="messages.summarizeText">messages.summarizeText</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.updatePinnedForumTopic.html" name="messages.updatePinnedForumTopic">messages.updatePinnedForumTopic</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#rleDecode" name="rleDecode">null-byte RLE decode: rleDecode</a>
@@ -1306,6 +1321,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.saveDefaultSendAs.html" name="phone.saveDefaultSendAs">phone.saveDefaultSendAs</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.sendGroupCallEncryptedMessage.html" name="phone.sendGroupCallEncryptedMessage">phone.sendGroupCallEncryptedMessage</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.sendGroupCallMessage.html" name="phone.sendGroupCallMessage">phone.sendGroupCallMessage</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/stats.getPollStats.html" name="stats.getPollStats">stats.getPollStats</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.startLive.html" name="stories.startLive">stories.startLive</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/users.suggestBirthday.html" name="users.suggestBirthday">users.suggestBirthday</a>
 * [Contributing](https://docs.madelineproto.xyz/docs/CONTRIB.html) - You can contribute in various ways.

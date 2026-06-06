@@ -96,6 +96,8 @@ abstract class InternalDoc
     public $smsjobs;
     /** @var \danog\MadelineProto\Namespace\Fragment $fragment */
     public $fragment;
+    /** @var \danog\MadelineProto\Namespace\Aicompose $aicompose */
+    public $aicompose;
 
     /**
      * Export APIFactory instance with the specified namespace.
@@ -147,6 +149,8 @@ abstract class InternalDoc
         $this->smsjobs->setWrapper($this->wrapper);
         $this->fragment ??= new \danog\MadelineProto\Namespace\AbstractAPI('fragment');
         $this->fragment->setWrapper($this->wrapper);
+        $this->aicompose ??= new \danog\MadelineProto\Namespace\AbstractAPI('aicompose');
+        $this->aicompose->setWrapper($this->wrapper);
     }
     /**
          * Convert MTProto parameters to bot API parameters.

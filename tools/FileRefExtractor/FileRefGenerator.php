@@ -67,11 +67,29 @@ final class FileRefGenerator
             $locations[$constructor][] = new GetMessageOp(
                 new GetInputPeerOp(new Path([[$constructor, 'peer_id']])),
                 new CopyOp([[$constructor, 'id']]),
-                $constructor === 'message' ? new CopyOp([[$constructor, 'from_scheduled', Path::FLAG_PASSTHROUGH]]) : null,
                 $constructor === 'message' ? new CopyOp([[$constructor, 'quick_reply_shortcut_id', Path::FLAG_PASSTHROUGH]]) : null,
                 'fileSourceMessage',
             );
         }
+
+        $locations['message'][] = new CallOp(
+            'messages.getScheduledMessages',
+            [
+                'peer' => new GetInputPeerOp(new Path([['messages.getScheduledMessages', 'peer']], true)),
+                'id' => new ArrayOp(new CopyOp([['message', 'id']])),
+            ],
+            'fileSourceScheduledMessage'
+        );
+
+
+        $locations['message'][] = new CallOp(
+            'messages.getScheduledMessages',
+            [
+                'peer' => new GetInputPeerOp(new Path([['updateNewScheduledMessage', 'message'], ['message', 'peer_id']], true)),
+                'id' => new ArrayOp(new CopyOp([['message', 'id']])),
+            ],
+            'fileSourceScheduledMessage'
+        );
 
         $storyMethods = [];
         foreach (['stories.Stories'] as $t) {
@@ -334,7 +352,6 @@ final class FileRefGenerator
             new GetInputPeerOp(new Path([['updateMessagePoll', 'peer', Path::FLAG_IF_ABSENT_ABORT]])),
             new CopyOp([['updateMessagePoll', 'msg_id', Path::FLAG_IF_ABSENT_ABORT]]),
             null,
-            null,
             'fileSourceMessage',
         );
 
@@ -534,8 +551,7 @@ final class FileRefGenerator
         $pre = [
             'fileSourceMessage' => [
                 'flags' => '#',
-                'from_scheduled' => 'flags.0?true',
-                'quick_reply_shortcut_id' => 'flags.1?int',
+                'quick_reply_shortcut_id' => 'flags.0?int',
                 'peer' => 'long',
                 'id' => 'int',
             ],

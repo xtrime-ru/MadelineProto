@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<files psalm-version="7.0.0-beta14@e66ca9901442421cbdec6c571899410922e22ff6">
+<files psalm-version="dev-master@5c1c31c62baecc1759b1991a0b17793e88ee3951">
   <file src="src/API.php">
     <ArgumentTypeCoercion>
       <code><![CDATA[$settings]]></code>
@@ -37,6 +37,7 @@
       <code><![CDATA[wakeup]]></code>
     </PossiblyNullReference>
     <PropertyNotSetInConstructor>
+      <code><![CDATA[API]]></code>
       <code><![CDATA[API]]></code>
       <code><![CDATA[API]]></code>
       <code><![CDATA[API]]></code>
@@ -617,6 +618,9 @@
       <code><![CDATA[rethrowInner]]></code>
       <code><![CDATA[rethrowInner]]></code>
     </PossiblyNullReference>
+    <PropertyNotSetInConstructor>
+      <code><![CDATA[EventHandler]]></code>
+    </PropertyNotSetInConstructor>
     <PropertyTypeCoercion>
       <code><![CDATA[self::$pluginCache]]></code>
     </PropertyTypeCoercion>
@@ -1726,6 +1730,16 @@
       <code><![CDATA[$this->callId]]></code>
     </MixedAssignment>
   </file>
+  <file src="src/EventHandler/Message/Service/DialogNoForwardRequest.php">
+    <ClassMustBeFinal>
+      <code><![CDATA[DialogNoForwardRequest]]></code>
+    </ClassMustBeFinal>
+  </file>
+  <file src="src/EventHandler/Message/Service/DialogNoForwardToggle.php">
+    <ClassMustBeFinal>
+      <code><![CDATA[DialogNoForwardToggle]]></code>
+    </ClassMustBeFinal>
+  </file>
   <file src="src/EventHandler/Message/Service/DialogSetChatTheme.php">
     <MixedAssignment>
       <code><![CDATA[$this->emoticon]]></code>
@@ -1909,6 +1923,11 @@
     <PossiblyNullPropertyAssignmentValue>
       <code><![CDATA[$API->getIdInternal($rawPinned)]]></code>
     </PossiblyNullPropertyAssignmentValue>
+  </file>
+  <file src="src/EventHandler/Plugin/RestartPlugin.php">
+    <PropertyNotSetInConstructor>
+      <code><![CDATA[RestartPlugin]]></code>
+    </PropertyNotSetInConstructor>
   </file>
   <file src="src/EventHandler/Poll/MultiplePoll.php">
     <PropertyNotSetInConstructor>
@@ -3235,16 +3254,6 @@
       <code><![CDATA[new Publisher(new LoginState($this->authorized, $this->authorized_dc))]]></code>
       <code><![CDATA[new Publisher(new LoginState($this->authorized, $this->authorized_dc))]]></code>
     </DocblockTypeContradiction>
-    <ImpureMethodCall>
-      <code><![CDATA[load]]></code>
-      <code><![CDATA[load]]></code>
-    </ImpureMethodCall>
-    <ImpureStaticProperty>
-      <code><![CDATA[GarbageCollector::$prometheus]]></code>
-      <code><![CDATA[GarbageCollector::$prometheus]]></code>
-      <code><![CDATA[Lang::$current_lang]]></code>
-      <code><![CDATA[Magic::$isIpcWorker]]></code>
-    </ImpureStaticProperty>
     <InvalidArgument>
       <code><![CDATA[$callbacks]]></code>
       <code><![CDATA[$callbacks]]></code>
@@ -5152,6 +5161,7 @@
       <code><![CDATA[$message['action']['distance']]]></code>
       <code><![CDATA[$message['action']['duration'] ?? null]]></code>
       <code><![CDATA[$message['action']['duration'] ?? null]]></code>
+      <code><![CDATA[$message['action']['expired']]]></code>
       <code><![CDATA[$message['action']['game_id']]]></code>
       <code><![CDATA[$message['action']['gift']]]></code>
       <code><![CDATA[$message['action']['hidden'] ?? null]]></code>
@@ -5168,11 +5178,15 @@
       <code><![CDATA[$message['action']['message']['text']]]></code>
       <code><![CDATA[$message['action']['months']]]></code>
       <code><![CDATA[$message['action']['name_hidden'] ?? null]]></code>
+      <code><![CDATA[$message['action']['new_value']]]></code>
+      <code><![CDATA[$message['action']['new_value']]]></code>
       <code><![CDATA[$message['action']['payload']]]></code>
       <code><![CDATA[$message['action']['peers']]]></code>
       <code><![CDATA[$message['action']['period']]]></code>
       <code><![CDATA[$message['action']['photo']]]></code>
       <code><![CDATA[$message['action']['photo']]]></code>
+      <code><![CDATA[$message['action']['prev_value']]]></code>
+      <code><![CDATA[$message['action']['prev_value']]]></code>
       <code><![CDATA[$message['action']['reason']['_'] ?? '']]></code>
       <code><![CDATA[$message['action']['recurring_init'] ?? null]]></code>
       <code><![CDATA[$message['action']['recurring_init'] ?? null]]></code>
@@ -5269,6 +5283,7 @@
       <code><![CDATA[$message['action']['distance']]]></code>
       <code><![CDATA[$message['action']['duration']]]></code>
       <code><![CDATA[$message['action']['duration']]]></code>
+      <code><![CDATA[$message['action']['expired']]]></code>
       <code><![CDATA[$message['action']['from_id']]]></code>
       <code><![CDATA[$message['action']['game_id']]]></code>
       <code><![CDATA[$message['action']['gift']]]></code>
@@ -5292,11 +5307,15 @@
       <code><![CDATA[$message['action']['message']['text']]]></code>
       <code><![CDATA[$message['action']['months']]]></code>
       <code><![CDATA[$message['action']['name_hidden']]]></code>
+      <code><![CDATA[$message['action']['new_value']]]></code>
+      <code><![CDATA[$message['action']['new_value']]]></code>
       <code><![CDATA[$message['action']['payload']]]></code>
       <code><![CDATA[$message['action']['peers']]]></code>
       <code><![CDATA[$message['action']['period']]]></code>
       <code><![CDATA[$message['action']['photo']]]></code>
       <code><![CDATA[$message['action']['photo']]]></code>
+      <code><![CDATA[$message['action']['prev_value']]]></code>
+      <code><![CDATA[$message['action']['prev_value']]]></code>
       <code><![CDATA[$message['action']['reason']]]></code>
       <code><![CDATA[$message['action']['reason']['_']]]></code>
       <code><![CDATA[$message['action']['recurring_init']]]></code>
@@ -5535,12 +5554,6 @@
     <MixedOperand>
       <code><![CDATA[$res['human_result']]]></code>
     </MixedOperand>
-    <PossiblyNullArgument>
-      <code><![CDATA[end($backtrace)['file']]]></code>
-    </PossiblyNullArgument>
-    <PossiblyUndefinedArrayOffset>
-      <code><![CDATA[end($backtrace)['file']]]></code>
-    </PossiblyUndefinedArrayOffset>
   </file>
   <file src="src/MyTelegramOrgWrapper.php">
     <MissingReturnType>
@@ -6863,9 +6876,11 @@
       <code><![CDATA[$button['copy_text']]]></code>
       <code><![CDATA[$button['copy_text']['text']]]></code>
       <code><![CDATA[$button['forward_text']]]></code>
+      <code><![CDATA[$button['icon_custom_emoji_id']]]></code>
       <code><![CDATA[$button['login_url']]]></code>
       <code><![CDATA[$button['query']]]></code>
       <code><![CDATA[$button['request_write_access']]]></code>
+      <code><![CDATA[$button['style']]]></code>
       <code><![CDATA[$button['switch_inline_query']]]></code>
       <code><![CDATA[$button['switch_inline_query_current_chat']]]></code>
       <code><![CDATA[$button['text']]]></code>
@@ -6962,6 +6977,7 @@
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['query']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['query']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['request_write_access']]]></code>
+      <code><![CDATA[$newrows[$key]['buttons'][$button_key]['style']['icon']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['text']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['url']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['url']]]></code>
