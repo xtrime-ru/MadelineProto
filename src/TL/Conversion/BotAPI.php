@@ -97,7 +97,15 @@ trait BotAPI
                         : 'keyboardButtonSimpleWebView';
                     $newrows[$key]['buttons'][$button_key]['url'] = $button['web_app']['url'];
                 } elseif (isset($button['switch_inline_query'])) {
-                    $button = $button['switch_inline_query'];
+                    $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonSwitchInline';
+                    $newrows[$key]['buttons'][$button_key]['same_peer'] = false;
+                    $newrows[$key]['buttons'][$button_key]['query'] = $button['switch_inline_query'];
+                } elseif (isset($button['switch_inline_query_current_chat'])) {
+                    $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonSwitchInline';
+                    $newrows[$key]['buttons'][$button_key]['same_peer'] = true;
+                    $newrows[$key]['buttons'][$button_key]['query'] = $button['switch_inline_query_current_chat'] ?? '';
+                } elseif (isset($button['switch_inline_query_chosen_chat'])) {
+                    $button = $button['switch_inline_query_chosen_chat'];
                     $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonSwitchInline';
                     $newrows[$key]['buttons'][$button_key]['same_peer'] = false;
                     $newrows[$key]['buttons'][$button_key]['query'] = $button['query'] ?? '';
@@ -118,10 +126,6 @@ trait BotAPI
                     if (!empty($peer_types)) {
                         $newrows[$key]['buttons'][$button_key]['peer_types'] = $peer_types;
                     }
-                } elseif (isset($button['switch_inline_query_current_chat'])) {
-                    $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonSwitchInline';
-                    $newrows[$key]['buttons'][$button_key]['same_peer'] = true;
-                    $newrows[$key]['buttons'][$button_key]['query'] = $button['switch_inline_query_current_chat'] ?? '';
                 } elseif (isset($button['callback_game'])) {
                     $newrows[$key]['buttons'][$button_key]['_'] = 'keyboardButtonGame';
                     $newrows[$key]['buttons'][$button_key]['text'] = $button['callback_game'];
