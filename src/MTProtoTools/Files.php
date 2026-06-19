@@ -779,6 +779,9 @@ trait Files
                     $res['ext'] = '';
                 }
                 $res['name'] = $pathinfo['filename'];
+                if (!isset($res['size']) && isset($messageMedia['file_size'])) {
+                    $res['size'] = $messageMedia['file_size'];
+                }
                 return $res;
             }
             return $messageMedia;
