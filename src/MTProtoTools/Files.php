@@ -1214,6 +1214,10 @@ trait Files
                 if (!array_key_exists('InputFileLocation', $messageMedia) && array_key_exists('botApiFileId', $messageMedia)) {
                     $messageMedia = $this->getDownloadInfo($messageMedia['botApiFileId']);
                 }
+                if (!array_key_exists('InputFileLocation', $messageMedia)) {
+                    $this->logger->logger(['message' => 'Extracting download info from media', 'media' => $messageMedia]);
+                    $messageMedia = $this->getDownloadInfo($messageMedia);
+                }
                 $basic_param = ['location' => $messageMedia['InputFileLocation'], 'cdn_supported' => true, 'floodWaitLimit' => 0, 'cancellation' => $cancellation, 'specialMethodType' => SpecialMethodType::FILE_RELATED];
             } else {
                 $basic_param = ['file_token' => $messageMedia['file_token'], 'floodWaitLimit' => 0, 'cancellation' => $cancellation, 'specialMethodType' => SpecialMethodType::FILE_RELATED];
