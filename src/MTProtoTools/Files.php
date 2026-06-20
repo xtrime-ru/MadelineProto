@@ -772,13 +772,19 @@ trait Files
             }
             if (isset($messageMedia['file_id'])) {
                 $res = $this->getDownloadInfo($messageMedia['file_id']);
-                $pathinfo = pathinfo($messageMedia['file_name']);
-                if (isset($pathinfo['extension'])) {
-                    $res['ext'] = '.'.$pathinfo['extension'];
+                if (isset($messageMedia['file_name'])) {
+                    $pathinfo = pathinfo($messageMedia['file_name']);
+                    if (isset($pathinfo['extension'])) {
+                        $res['ext'] = '.'.$pathinfo['extension'];
+                    } else {
+                        $res['ext'] = '';
+                    }
+                    $res['name'] = $pathinfo['filename'];
                 } else {
                     $res['ext'] = '';
+                    $res['name'] = '';
                 }
-                $res['name'] = $pathinfo['filename'];
+
                 if (!isset($res['size']) && isset($messageMedia['file_size'])) {
                     $res['size'] = $messageMedia['file_size'];
                 }
