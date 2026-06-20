@@ -237,6 +237,10 @@ final class Connection
      */
     public function getInputClientProxy(): ?array
     {
+        if ($this->chosenCtx === null) {
+            $this->connect();
+        }
+        Assert::notNull($this->chosenCtx);
         return $this->chosenCtx->getInputClientProxy();
     }
     /**
