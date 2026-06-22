@@ -1257,10 +1257,15 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#wrapPin" name="wrapPin">Wrap a Pin constructor into an abstract Pinned object: wrapPin</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#wrapMedia" name="wrapMedia">Wrap a media constructor into an abstract Media object: wrapMedia</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#wrapUpdate" name="wrapUpdate">Wrap an Update constructor into an abstract Update object: wrapUpdate</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.confirmBotConnection.html" name="account.confirmBotConnection">account.confirmBotConnection</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.deletePasskey.html" name="account.deletePasskey">account.deletePasskey</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.deleteWebBrowserSettingsExceptions.html" name="account.deleteWebBrowserSettingsExceptions">account.deleteWebBrowserSettingsExceptions</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.getPasskeys.html" name="account.getPasskeys">account.getPasskeys</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.getWebBrowserSettings.html" name="account.getWebBrowserSettings">account.getWebBrowserSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.initPasskeyRegistration.html" name="account.initPasskeyRegistration">account.initPasskeyRegistration</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.registerPasskey.html" name="account.registerPasskey">account.registerPasskey</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.toggleWebBrowserSettingsException.html" name="account.toggleWebBrowserSettingsException">account.toggleWebBrowserSettingsException</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.updateWebBrowserSettings.html" name="account.updateWebBrowserSettings">account.updateWebBrowserSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.createTone.html" name="aicompose.createTone">aicompose.createTone</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.deleteTone.html" name="aicompose.deleteTone">aicompose.deleteTone</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.getTone.html" name="aicompose.getTone">aicompose.getTone</a>
@@ -1279,6 +1284,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getAccessSettings.html" name="bots.getAccessSettings">bots.getAccessSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getRequestedWebViewButton.html" name="bots.getRequestedWebViewButton">bots.getRequestedWebViewButton</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.requestWebViewButton.html" name="bots.requestWebViewButton">bots.requestWebViewButton</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.setJoinChatResults.html" name="bots.setJoinChatResults">bots.setJoinChatResults</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.updateContactNote.html" name="contacts.updateContactNote">contacts.updateContactNote</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.addPollAnswer.html" name="messages.addPollAnswer">messages.addPollAnswer</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.checkUrlAuthMatchCode.html" name="messages.checkUrlAuthMatchCode">messages.checkUrlAuthMatchCode</a>
@@ -1297,6 +1303,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getForumTopicsByID.html" name="messages.getForumTopicsByID">messages.getForumTopicsByID</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getFutureChatCreatorAfterLeave.html" name="messages.getFutureChatCreatorAfterLeave">messages.getFutureChatCreatorAfterLeave</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getPersonalChannelHistory.html" name="messages.getPersonalChannelHistory">messages.getPersonalChannelHistory</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getRichMessage.html" name="messages.getRichMessage">messages.getRichMessage</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getUnreadPollVotes.html" name="messages.getUnreadPollVotes">messages.getUnreadPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.readPollVotes.html" name="messages.readPollVotes">messages.readPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reorderPinnedForumTopics.html" name="messages.reorderPinnedForumTopics">messages.reorderPinnedForumTopics</a>

@@ -1095,7 +1095,7 @@ interface Account
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
      * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
      * @param ?\Amp\Cancellation $cancellation Cancellation
-     * @return array{_: 'account.connectedBots', connected_bots: list<array{_: 'connectedBot', recipients: array{_: 'businessBotRecipients', existing_chats: bool, new_chats: bool, contacts: bool, non_contacts: bool, exclude_selected: bool, users?: list<int>, exclude_users?: list<int>}, rights: array{_: 'businessBotRights', reply: bool, read_messages: bool, delete_sent_messages: bool, delete_received_messages: bool, edit_name: bool, edit_bio: bool, edit_profile_photo: bool, edit_username: bool, view_gifts: bool, sell_gifts: bool, change_gift_settings: bool, transfer_and_upgrade_gifts: bool, transfer_stars: bool, manage_stories: bool}, bot_id: int}>, users: list<array|int|string>} @see https://docs.madelineproto.xyz/API_docs/types/account.ConnectedBots.html
+     * @return array{_: 'account.connectedBots', connected_bots: list<array{_: 'connectedBot', recipients: array{_: 'businessBotRecipients', existing_chats: bool, new_chats: bool, contacts: bool, non_contacts: bool, exclude_selected: bool, users?: list<int>, exclude_users?: list<int>}, rights: array{_: 'businessBotRights', reply: bool, read_messages: bool, delete_sent_messages: bool, delete_received_messages: bool, edit_name: bool, edit_bio: bool, edit_profile_photo: bool, edit_username: bool, view_gifts: bool, sell_gifts: bool, change_gift_settings: bool, transfer_and_upgrade_gifts: bool, transfer_stars: bool, manage_stories: bool}, bot_id: int, device?: string, date?: int, location?: string}>, users: list<array|int|string>} @see https://docs.madelineproto.xyz/API_docs/types/account.ConnectedBots.html
      */
     public function getConnectedBots(?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
 
@@ -1373,4 +1373,59 @@ interface Account
      * @param ?\Amp\Cancellation $cancellation Cancellation
      */
     public function deletePasskey(string|null $id = '', ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): bool;
+
+    /**
+     *
+     *
+     * @param array|int|string $bot_id @see https://docs.madelineproto.xyz/API_docs/types/InputUser.html
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     */
+    public function confirmBotConnection(array|int|string|null $bot_id = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): bool;
+
+    /**
+     *
+     *
+     * @param list<int|string>|array<never, never> $hash Array of  @see https://docs.madelineproto.xyz/API_docs/types/int|string.html
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     * @return array{_: 'account.webBrowserSettingsNotModified'}|array{_: 'account.webBrowserSettings', open_external_browser: bool, display_close_button: bool, external_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, inapp_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, hash: list<int|string>} @see https://docs.madelineproto.xyz/API_docs/types/account.WebBrowserSettings.html
+     */
+    public function getWebBrowserSettings(array $hash = [], ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
+
+    /**
+     *
+     *
+     * @param bool $open_external_browser
+     * @param bool $display_close_button
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     * @return array{_: 'account.webBrowserSettingsNotModified'}|array{_: 'account.webBrowserSettings', open_external_browser: bool, display_close_button: bool, external_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, inapp_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, hash: list<int|string>} @see https://docs.madelineproto.xyz/API_docs/types/account.WebBrowserSettings.html
+     */
+    public function updateWebBrowserSettings(bool|null $open_external_browser = null, bool|null $display_close_button = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
+
+    /**
+     *
+     *
+     * @param bool $delete
+     * @param bool $open_external_browser
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     * @return array @see https://docs.madelineproto.xyz/API_docs/types/Updates.html
+     */
+    public function toggleWebBrowserSettingsException(bool|null $delete = null, bool|null $open_external_browser = null, string|null $url = '', ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
+
+    /**
+     *
+     *
+     * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
+     * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
+     * @param ?\Amp\Cancellation $cancellation Cancellation
+     * @return array{_: 'account.webBrowserSettingsNotModified'}|array{_: 'account.webBrowserSettings', open_external_browser: bool, display_close_button: bool, external_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, inapp_exceptions: list<array{_: 'webDomainException', domain: string, url: string, title: string, favicon?: int}>, hash: list<int|string>} @see https://docs.madelineproto.xyz/API_docs/types/account.WebBrowserSettings.html
+     */
+    public function deleteWebBrowserSettingsExceptions(?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
 }

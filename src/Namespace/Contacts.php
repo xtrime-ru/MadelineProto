@@ -114,6 +114,8 @@ interface Contacts
     /**
      * Returns users found by username substring.
      *
+     * @param bool $broadcasts
+     * @param bool $bots
      * @param string $q Target substring
      * @param int $limit Maximum number of users to be returned
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
@@ -121,7 +123,7 @@ interface Contacts
      * @param ?\Amp\Cancellation $cancellation Cancellation
      * @return array{_: 'contacts.found', my_results: list<array|int|string>, results: list<array|int|string>, chats: list<array|int|string>, users: list<array|int|string>} @see https://docs.madelineproto.xyz/API_docs/types/contacts.Found.html
      */
-    public function search(string|null $q = '', int|null $limit = 0, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
+    public function search(bool|null $broadcasts = null, bool|null $bots = null, string|null $q = '', int|null $limit = 0, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
 
     /**
      * Get most used peers.

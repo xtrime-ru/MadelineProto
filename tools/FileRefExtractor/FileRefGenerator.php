@@ -81,7 +81,6 @@ final class FileRefGenerator
             'fileSourceScheduledMessage'
         );
 
-
         $locations['message'][] = new CallOp(
             'messages.getScheduledMessages',
             [
@@ -334,6 +333,7 @@ final class FileRefGenerator
             $locations[$c][] = new CallOp('account.getSavedRingtones', ['hash' => new PrimitiveLiteralOp('long', 0)], 'fileSourceSavedRingtones');
         }
 
+        $locations['draftMessage'][] = new Noop('Do not store references from drafts');
         $locations['recentMeUrlChatInvite'][] = new Noop('Do not store references based on chat invite links');
         $locations['messages.checkChatInvite'][] = new Noop('Do not store references based on chat invite links');
 
@@ -465,6 +465,9 @@ final class FileRefGenerator
             }
         }
 
+        foreach (['updateChatUserTyping', 'updateChannelUserTyping', 'updateUserTyping'] as $type) {
+            $locations[$type][] = new Noop('Documents encountered in rich text message live drafts are ephemeral');
+        }
         $locations['messages.getCustomEmojiDocuments'][] = new Noop("Do not store file references in this context");
 
         $locations['account.uploadTheme'][] = new Noop('A freshly uploaded theme file will obtain a context only once it is created via account.createTheme');
@@ -718,7 +721,7 @@ final class FileRefGenerator
                             // The above are covered by the GetInputStickerSet document context
 
                             || $top === 'updateMessagePoll'
-                            // Tmp
+                            // It's okay
                         ) {
                             return;
                         }

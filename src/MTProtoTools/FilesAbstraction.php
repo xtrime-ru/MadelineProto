@@ -225,7 +225,6 @@ trait FilesAbstraction
         ?callable $callback = null,
         ?string $fileName = null,
         ?string $mimeType = null,
-        ?int $ttl = null,
         bool $spoiler = false,
         ?int $replyToMsgId = null,
         ?int $topMsgId = null,
@@ -373,7 +372,6 @@ trait FilesAbstraction
         ParseMode $parseMode = ParseMode::TEXT,
         ?callable $callback = null,
         ?string $fileName = null,
-        ?int $ttl = null,
         bool $spoiler = false,
         ?int $replyToMsgId = null,
         ?int $topMsgId = null,
@@ -521,7 +519,6 @@ trait FilesAbstraction
         ParseMode $parseMode = ParseMode::TEXT,
         ?callable $callback = null,
         ?string $fileName = null,
-        ?int $ttl = null,
         bool $spoiler = false,
         ?int $replyToMsgId = null,
         ?int $topMsgId = null,
@@ -668,7 +665,6 @@ trait FilesAbstraction
         array $stickerSet = ['_' => 'inputStickerSetEmpty'],
         ?callable $callback = null,
         ?string $fileName = null,
-        ?int $ttl = null,
         ?int $replyToMsgId = null,
         ?int $topMsgId = null,
         ?array $replyMarkup = null,
@@ -822,7 +818,6 @@ trait FilesAbstraction
      * @param ParseMode                                                     $parseMode              Text parse mode for the caption
      * @param ?callable(float, float, int)                                  $callback               Upload callback (percent, speed in mpbs, time elapsed)
      * @param ?string                                                       $fileName               Optional file name, if absent will be extracted from the passed $file.
-     * @param integer|null                                                  $ttl                     Time to live
      * @param boolean                                                       $spoiler                 Whether the message is a spoiler
      * @param boolean                                                       $roundMessage            Whether the message should be round
      * @param boolean                                                       $supportsStreaming        Whether the video supports streaming
@@ -852,7 +847,6 @@ trait FilesAbstraction
         ?callable $callback = null,
         ?string $fileName = null,
         string $mimeType = 'video/mp4',
-        ?int $ttl = null,
         bool $spoiler = false,
         bool $roundMessage = false,
         bool $supportsStreaming = true,
@@ -1011,7 +1005,6 @@ trait FilesAbstraction
      * @param ParseMode                                                     $parseMode              Text parse mode for the caption
      * @param ?callable(float, float, int)                                  $callback               Upload callback (percent, speed in mpbs, time elapsed)
      * @param ?string                                                       $fileName               Optional file name, if absent will be extracted from the passed $file.
-     * @param integer|null                                                  $ttl                     Time to live
      * @param boolean                                                       $spoiler                 Whether the message is a spoiler
      * @param integer|null                                                  $replyToMsgId            ID of message to reply to.
      * @param integer|null                                                  $topMsgId                ID of thread where to send the message.
@@ -1034,7 +1027,6 @@ trait FilesAbstraction
         ParseMode $parseMode = ParseMode::TEXT,
         ?callable $callback = null,
         ?string $fileName = null,
-        ?int $ttl = null,
         bool $spoiler = false,
         ?int $duration = null,
         ?int $width = null,
@@ -1213,7 +1205,6 @@ trait FilesAbstraction
         ?int $duration = null,
         ?string $title = null,
         ?string $performer = null,
-        ?int $ttl = null,
         ?int $replyToMsgId = null,
         ?int $topMsgId = null,
         ?array $replyMarkup = null,
@@ -1351,7 +1342,6 @@ trait FilesAbstraction
      * @param ParseMode                                                     $parseMode              Text parse mode for the caption
      * @param ?callable(float, float, int)                                  $callback               Upload callback (percent, speed in mpbs, time elapsed)
      * @param ?string                                                       $fileName               Optional file name, if absent will be extracted from the passed $file.
-     * @param integer|null                                                  $ttl                     Time to live
      * @param integer|null                                                  $duration                Duration of the voice
      * @param array|null                                                    $waveform                Waveform of the voice
      * @param integer|null                                                  $replyToMsgId            ID of message to reply to.
@@ -1374,7 +1364,6 @@ trait FilesAbstraction
         ParseMode $parseMode = ParseMode::TEXT,
         ?callable $callback = null,
         ?string $fileName = null,
-        ?int $ttl = null,
         ?int $duration = null,
         ?array $waveform = null,
         ?int $replyToMsgId = null,
@@ -1760,6 +1749,7 @@ trait FilesAbstraction
             Audio::class => [
                 '_' => 'inputMediaUploadedDocument',
                 'file' => $file,
+                'ttl_seconds' => $ttl,
                 'thumb' => $thumb,
                 'mime_type' => $mimeType,
                 'attributes' => $attributes,
@@ -1767,6 +1757,7 @@ trait FilesAbstraction
             Voice::class => [
                 '_' => 'inputMediaUploadedDocument',
                 'file' => $file,
+                'ttl_seconds' => $ttl,
                 'mime_type' => $mimeType,
                 'attributes' => $attributes,
             ],
@@ -1811,13 +1802,19 @@ trait FilesAbstraction
             'media' => $media,
             'cancellation' => $cancellation,
         ];
-        $res = $this->methodCallAsyncRead(
-            'messages.uploadMedia',
-            $params
-        );
-        $params['media'] = $res;
-        if ($uploadOnly) {
-            return $this->wrapMedia($res);
+        if ($ttl) {
+            if ($uploadOnly) {
+                throw new AssertionError("Can't upload only for media with TTL!");
+            }
+        } else {
+            $res = $this->methodCallAsyncRead(
+                'messages.uploadMedia',
+                $params
+            );
+            $params['media'] = $res;
+            if ($uploadOnly) {
+                return $this->wrapMedia($res);
+            }
         }
         $res = $this->wrapMessage($this->extractMessage($this->methodCallAsyncRead(
             'messages.sendMedia',

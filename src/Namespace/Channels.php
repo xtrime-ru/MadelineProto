@@ -169,7 +169,7 @@ interface Channels
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
      * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
      * @param ?\Amp\Cancellation $cancellation Cancellation
-     * @return array @see https://docs.madelineproto.xyz/API_docs/types/Updates.html
+     * @return array{_: 'messages.chatInviteJoinResultOk', updates: array}|array{_: 'messages.chatInviteJoinResultWebView', webview: array{_: 'webViewResultUrl', fullsize: bool, fullscreen: bool, same_origin: bool, query_id?: int, url: string}, bot_id: int, users: list<array|int|string>} @see https://docs.madelineproto.xyz/API_docs/types/messages.ChatInviteJoinResult.html
      */
     public function joinChannel(array|int|string|null $channel = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
 
@@ -446,13 +446,15 @@ interface Channels
      * Set whether all users should [request admin approval to join the group »](https://core.telegram.org/api/invites#join-requests).
      *
      * @param bool $enabled Toggle
+     * @param bool $apply_to_invites
      * @param array|int|string $channel Group @see https://docs.madelineproto.xyz/API_docs/types/InputChannel.html
+     * @param array|int|string $guard_bot @see https://docs.madelineproto.xyz/API_docs/types/InputUser.html
      * @param ?int $floodWaitLimit Can be used to specify a custom flood wait limit: if a FLOOD_WAIT_ rate limiting error is received with a waiting period bigger than this integer, an RPCErrorException will be thrown; otherwise, MadelineProto will simply wait for the specified amount of time. Defaults to the value specified in the settings: https://docs.madelineproto.xyz/PHP/danog/MadelineProto/Settings/RPC.html#setfloodtimeout-int-floodtimeout-self
      * @param ?string $queueId If specified, ensures strict server-side execution order of concurrent calls with the same queue ID.
      * @param ?\Amp\Cancellation $cancellation Cancellation
      * @return array @see https://docs.madelineproto.xyz/API_docs/types/Updates.html
      */
-    public function toggleJoinRequest(bool $enabled, array|int|string|null $channel = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
+    public function toggleJoinRequest(bool $enabled, bool|null $apply_to_invites = null, array|int|string|null $channel = null, array|int|string|null $guard_bot = null, ?int $floodWaitLimit = null, ?string $queueId = null, ?\Amp\Cancellation $cancellation = null): array;
 
     /**
      * Reorder active usernames.
