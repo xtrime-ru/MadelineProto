@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<files psalm-version="dev-master@5c1c31c62baecc1759b1991a0b17793e88ee3951">
+<files psalm-version="dev-master@7e751c06a756fa64dc4c759c09fe4a173afcb433">
   <file src="src/API.php">
     <ArgumentTypeCoercion>
       <code><![CDATA[$settings]]></code>
@@ -268,7 +268,6 @@
       <code><![CDATA[$singleMedia['media']]]></code>
     </MixedAssignment>
     <PossiblyNullReference>
-      <code><![CDATA[getInputClientProxy]]></code>
       <code><![CDATA[isHttp]]></code>
     </PossiblyNullReference>
     <PossiblyUndefinedArrayOffset>
@@ -6882,6 +6881,7 @@
       <code><![CDATA[$button['request_write_access']]]></code>
       <code><![CDATA[$button['style']]]></code>
       <code><![CDATA[$button['switch_inline_query']]]></code>
+      <code><![CDATA[$button['switch_inline_query_chosen_chat']]]></code>
       <code><![CDATA[$button['switch_inline_query_current_chat']]]></code>
       <code><![CDATA[$button['text']]]></code>
       <code><![CDATA[$button['url']]]></code>
@@ -6974,6 +6974,7 @@
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['copy_text']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['data']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['fwd_text']]]></code>
+      <code><![CDATA[$newrows[$key]['buttons'][$button_key]['query']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['query']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['query']]]></code>
       <code><![CDATA[$newrows[$key]['buttons'][$button_key]['request_write_access']]]></code>
