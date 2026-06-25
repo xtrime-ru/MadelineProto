@@ -554,6 +554,7 @@ final class Connection
             $message->setSerializedBody($body);
             unset($body);
         }
+        $this->createSession();
         $this->pendingOutgoingGauge?->inc();
         if ($message->unencrypted) {
             $this->unencryptedPendingOutgoing->enqueue($message);
