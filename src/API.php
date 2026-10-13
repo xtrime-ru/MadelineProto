@@ -119,6 +119,12 @@ final class API extends AbstractAPI
      */
     public const PEER_TYPE_CHANNEL = 'channel';
     /**
+     * This peer is a community.
+     *
+     * @var string
+     */
+    public const PEER_TYPE_COMMUNITY = 'community';
+    /**
      * Whether to generate only peer information.
      */
     public const INFO_TYPE_PEER = 0;
@@ -160,6 +166,8 @@ final class API extends AbstractAPI
 
     /**
      * Obtain the API ID UI template.
+     *
+     * @psalm-mutation-free
      */
     public function getWebAPITemplate(): string
     {
@@ -167,6 +175,8 @@ final class API extends AbstractAPI
     }
     /**
      * Set the API ID UI template.
+     *
+     * @psalm-external-mutation-free
      */
     public function setWebApiTemplate(string $template): void
     {
@@ -355,6 +365,9 @@ final class API extends AbstractAPI
     {
         $this->__construct($this->session->getSessionDirectoryPath());
     }
+    /**
+     * @psalm-pure
+     */
     #[\Override]
     public function __sleep(): array
     {

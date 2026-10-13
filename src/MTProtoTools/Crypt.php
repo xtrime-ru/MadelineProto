@@ -24,8 +24,8 @@ use danog\MadelineProto\Logger;
 use danog\MadelineProto\Magic;
 use danog\MadelineProto\MTProtoTools\Crypt\IGE;
 use danog\MadelineProto\SecurityException;
-use phpseclib3\Crypt\AES;
-use phpseclib3\Math\BigInteger;
+use phpseclib4\Crypt\AES;
+use phpseclib4\Math\BigInteger;
 
 use const OPENSSL_RAW_DATA;
 use const OPENSSL_ZERO_PADDING;
@@ -41,7 +41,10 @@ final class Crypt
      * @param string  $msg_key   Message key
      * @param string  $auth_key  Auth key
      * @param boolean $to_server To server/from server direction
+     *
      * @internal
+     *
+     * @psalm-pure
      */
     public static function kdf(string $msg_key, string $auth_key, bool $to_server = true): array
     {
@@ -52,6 +55,9 @@ final class Crypt
         $aes_iv = substr($sha256_b, 0, 8).substr($sha256_a, 8, 16).substr($sha256_b, 24, 8);
         return [$aes_key, $aes_iv];
     }
+    /**
+     * @psalm-pure
+     */
     public static function voipX(bool $outgoing, bool $signaling): int
     {
         $x = $outgoing ? 8 : 0;
@@ -62,6 +68,8 @@ final class Crypt
      * AES KDF function for MTProto v2, VoIP.
      *
      * @internal
+     *
+     * @psalm-pure
      */
     public static function voipKdf(string $msg_key, string $auth_key, int $x): array
     {
@@ -77,7 +85,10 @@ final class Crypt
      * @param string  $msg_key   Message key
      * @param string  $auth_key  Auth key
      * @param boolean $to_server To server/from server direction
+     *
      * @internal
+     *
+     * @psalm-pure
      */
     public static function oldKdf(string $msg_key, string $auth_key, bool $to_server = true): array
     {

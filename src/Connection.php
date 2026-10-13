@@ -144,6 +144,8 @@ final class Connection
      * Indicate if this socket needs to be reconnected.
      *
      * @param boolean $needsReconnect Whether the socket has to be reconnected
+     *
+     * @psalm-external-mutation-free
      */
     public function needReconnect(bool $needsReconnect): void
     {
@@ -158,6 +160,8 @@ final class Connection
     }
     /**
      * Set writing boolean.
+     *
+     * @psalm-external-mutation-free
      */
     public function writing(bool $writing): void
     {
@@ -166,6 +170,8 @@ final class Connection
     }
     /**
      * Set reading boolean.
+     *
+     * @psalm-external-mutation-free
      */
     public function reading(bool $reading): void
     {
@@ -188,6 +194,8 @@ final class Connection
     }
     /**
      * Indicate a received HTTP response.
+     *
+     * @psalm-external-mutation-free
      */
     public function httpReceived(): void
     {
@@ -202,6 +210,8 @@ final class Connection
     }
     /**
      * Indicate a sent HTTP request.
+     *
+     * @psalm-external-mutation-free
      */
     public function httpSent(): void
     {
@@ -245,12 +255,18 @@ final class Connection
     }
     /**
      * Check if is an HTTP connection.
+     *
+     * @psalm-mutation-free
      */
     public function isHttp(): bool
     {
         return $this->chosenCtx->isHttp();
     }
-    /** @return Publisher<ConnectionState> */
+    /**
+     * @return Publisher<ConnectionState>
+     *
+     * @psalm-mutation-free
+     */
     public function getState(): Publisher
     {
         return $this->shared->auth->connectionState;
@@ -555,6 +571,10 @@ final class Connection
             unset($body);
         }
         $this->createSession();
+        if ($message->hasReply()) {
+            // Replied to (e.g. cancelled) while connecting: its body was already freed, and it must not be sent.
+            return;
+        }
         $this->pendingOutgoingGauge?->inc();
         if ($message->unencrypted) {
             $this->unencryptedPendingOutgoing->enqueue($message);
@@ -580,6 +600,8 @@ final class Connection
      *
      * @param DataCenterConnection $extra Shared instance
      * @param int                  $id    Connection ID
+     *
+     * @psalm-external-mutation-free
      */
     public function setExtra(DataCenterConnection $extra, int $datacenter, int $id): void
     {
@@ -644,6 +666,8 @@ final class Connection
     }
     /**
      * Get name.
+     *
+     * @psalm-pure
      */
     public function getName(): string
     {

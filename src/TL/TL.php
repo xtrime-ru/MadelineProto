@@ -92,6 +92,9 @@ final class TL implements TLInterface
      * API instance.
      */
     private ?MTProto $API = null;
+    /**
+     * @psalm-pure
+     */
     public function __sleep()
     {
         return [
@@ -106,6 +109,8 @@ final class TL implements TLInterface
      * Constructor function.
      *
      * @param MTProto $API API instance
+     *
+     * @psalm-mutation-free
      */
     public function __construct(?MTProto $API = null)
     {
@@ -242,6 +247,8 @@ final class TL implements TLInterface
      *      constructors: list<array{id: numeric-string, predicate: string, params: list<array{name: string, type: string}>, type: string, layer?: int}>,
      *      methods: list<array{id: numeric-string, method: string, params: list<array{name: string, type: string}>, type: string, layer?: int}>
      * }
+     *
+     * @psalm-external-mutation-free
      */
     public function toJson(string $filec, ?string $scheme_type = null): array
     {
@@ -372,6 +379,8 @@ final class TL implements TLInterface
     }
     /**
      * Get TL namespaces.
+     *
+     * @psalm-mutation-free
      */
     #[\Override]
     public function getMethodNamespaces(): array
@@ -385,6 +394,8 @@ final class TL implements TLInterface
     }
     /**
      * Get namespaced methods (method => namespace).
+     *
+     * @psalm-mutation-free
      */
     #[\Override]
     public function getMethodsNamespaced(): array
@@ -429,6 +440,8 @@ final class TL implements TLInterface
      * Deserialize bool.
      *
      * @param string $id Constructor ID
+     *
+     * @psalm-external-mutation-free
      */
     private function deserializeBool(string $id): bool
     {
@@ -671,6 +684,16 @@ final class TL implements TLInterface
         return $tl['id'].$this->serializeParams($tl, $arguments, $method, -1);
     }
     /**
+     * Whether a `DataJSON` argument was already passed as a dataJSON constructor, instead of as the
+     * decoded value we would have to encode ourselves.
+     *
+     * @psalm-pure
+     */
+    private static function isDataJSON(mixed $value): bool
+    {
+        return \is_array($value) && ($value['_'] ?? null) === 'dataJSON';
+    }
+    /**
      * Serialize parameters.
      *
      * @param array   $tl    TL object definition
@@ -680,7 +703,10 @@ final class TL implements TLInterface
     private function serializeParams(array $tl, array|Button $arguments, string|int $ctx, int $layer)
     {
         $serialized = '';
-        $arguments = $this->API->botAPIToMTProto($arguments instanceof Button ? $arguments->jsonSerialize() : $arguments);
+        $arguments = $arguments instanceof Button ? $arguments->jsonSerialize() : $arguments;
+        // The bot-API argument conversion is only relevant to the full API; a schema-only TL instance
+        // (e.g. the E2E conference block codec) has no API and serializes already-MTProto arguments.
+        $arguments = $this->API?->botAPIToMTProto($arguments) ?? $arguments;
         foreach ($tl['flags'] as [
             'flag' => $flag,
             'name' => $name,
@@ -791,12 +817,14 @@ final class TL implements TLInterface
             } else {
                 $value = $arguments[$name];
             }
-            if (\in_array($type, ['DataJSON', '%DataJSON'], true)) {
+            if (\in_array($type, ['DataJSON', '%DataJSON'], true) && !self::isDataJSON($value)) {
                 $value = ['_' => 'dataJSON', 'data' => json_encode($value)];
             }
             if (isset($current_argument['subtype']) && \in_array($current_argument['subtype'], ['DataJSON', '%DataJSON'], true)) {
                 array_walk($value, static function (&$arg): void {
-                    $arg = ['_' => 'dataJSON', 'data' => json_encode($arg)];
+                    if (!self::isDataJSON($arg)) {
+                        $arg = ['_' => 'dataJSON', 'data' => json_encode($arg)];
+                    }
                 });
             }
             if ($type === 'InputFile' && (!\is_array($value) || !(isset($value['_']) && $this->constructors->findByPredicate($value['_'])['type'] === 'InputFile'))) {
@@ -864,6 +892,8 @@ final class TL implements TLInterface
      * Compresses a waveform.
      *
      * @internal Don't use this manually, just pass an array of integers to $attribute['waveform'].
+     *
+     * @psalm-external-mutation-free
      */
     public static function compressWaveform(array $x): string
     {
@@ -1081,6 +1111,10 @@ final class TL implements TLInterface
             $x['channel_id'] = $x['channel_id'] > Magic::MAX_CHANNEL_ID
                 ? DialogId::fromMonoforumId($x['channel_id'])
                 : DialogId::fromSupergroupOrChannelId($x['channel_id']);
+        } elseif (isset($x['community_id'])) {
+            $x['community_id'] = $x['community_id'] > Magic::MAX_CHANNEL_ID
+                ? DialogId::fromMonoforumId($x['community_id'])
+                : DialogId::fromSupergroupOrChannelId($x['community_id']);
         } elseif (isset($x['random_bytes'])) {
             if (\strlen((string) $x['random_bytes']) < 15) {
                 throw new SecurityException('Random_bytes is too small!');
@@ -1089,6 +1123,9 @@ final class TL implements TLInterface
         } elseif ($x['_'] === 'channel'
             || $x['_'] === 'channelForbidden'
             || $x['_'] === 'channelFull'
+            || $x['_'] === 'communityFull'
+            || $x['_'] === 'community'
+            || $x['_'] === 'communityForbidden'
         ) {
             $x['id'] = $x['id'] > Magic::MAX_CHANNEL_ID
                 ? DialogId::fromMonoforumId($x['id'])
@@ -1097,6 +1134,11 @@ final class TL implements TLInterface
                 $x['linked_monoforum_id'] = $x['linked_monoforum_id'] > Magic::MAX_CHANNEL_ID
                     ? DialogId::fromMonoforumId($x['linked_monoforum_id'])
                     : DialogId::fromSupergroupOrChannelId($x['linked_monoforum_id']);
+            }
+            if (isset($x['linked_community_id'])) {
+                $x['linked_community_id'] = $x['linked_community_id'] > Magic::MAX_CHANNEL_ID
+                    ? DialogId::fromMonoforumId($x['linked_community_id'])
+                    : DialogId::fromSupergroupOrChannelId($x['linked_community_id']);
             }
         } elseif ($x['_'] === 'chat'
             || $x['_'] === 'chatForbidden'
@@ -1149,6 +1191,9 @@ final class TL implements TLInterface
         } elseif ($x['_'] === 'channel'
             || $x['_'] === 'channelForbidden'
             || $x['_'] === 'channelFull'
+            || $x['_'] === 'communityFull'
+            || $x['_'] === 'community'
+            || $x['_'] === 'communityForbidden'
         ) {
             unset($x['flags'], $x['flags2'], $x['access_hash']);
         } elseif ($x['_'] === 'chat'

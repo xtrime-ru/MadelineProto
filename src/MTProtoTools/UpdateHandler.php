@@ -24,6 +24,7 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
+use Amp\Future;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\TimeoutException;
@@ -37,6 +38,14 @@ use danog\DialogId\DialogId;
 use danog\MadelineProto\API;
 use danog\MadelineProto\EventHandler\AbstractMessage;
 use danog\MadelineProto\EventHandler\BotCommands;
+use danog\MadelineProto\EventHandler\Calls\AbstractGroupCall;
+use danog\MadelineProto\EventHandler\Calls\CallStreams;
+use danog\MadelineProto\EventHandler\Calls\ConferenceCall as ConferenceCallUpdate;
+use danog\MadelineProto\EventHandler\Calls\GroupCall as GroupCallUpdate;
+use danog\MadelineProto\EventHandler\Calls\GroupCallMessagesDeleted;
+use danog\MadelineProto\EventHandler\Calls\GroupCallParticipants;
+use danog\MadelineProto\EventHandler\Calls\LiveStory;
+use danog\MadelineProto\EventHandler\Calls\MultiCallMessage;
 use danog\MadelineProto\EventHandler\Channel\ChannelParticipant;
 use danog\MadelineProto\EventHandler\Channel\MessageForwards;
 use danog\MadelineProto\EventHandler\Channel\MessageViewsChanged;
@@ -60,6 +69,7 @@ use danog\MadelineProto\EventHandler\Message\Service\DialogChannelCreated;
 use danog\MadelineProto\EventHandler\Message\Service\DialogChannelMigrateFrom;
 use danog\MadelineProto\EventHandler\Message\Service\DialogChatJoinedByLink;
 use danog\MadelineProto\EventHandler\Message\Service\DialogChatMigrateTo;
+use danog\MadelineProto\EventHandler\Message\Service\DialogConferenceCall;
 use danog\MadelineProto\EventHandler\Message\Service\DialogContactSignUp;
 use danog\MadelineProto\EventHandler\Message\Service\DialogCreated;
 use danog\MadelineProto\EventHandler\Message\Service\DialogDeleteMessages;
@@ -136,10 +146,10 @@ use danog\MadelineProto\RPCError\MsgIdInvalidError;
 use danog\MadelineProto\RPCError\SessionPasswordNeededError;
 use danog\MadelineProto\RPCErrorException;
 use danog\MadelineProto\Settings;
+use danog\MadelineProto\Tgcalls\PrivateCallController;
 use danog\MadelineProto\TL\TL;
 use danog\MadelineProto\UpdateHandlerType;
 use danog\MadelineProto\VoIP\DiscardReason;
-use danog\MadelineProto\VoIPController;
 use Revolt\EventLoop;
 use SplQueue;
 use Throwable;
@@ -167,6 +177,8 @@ trait UpdateHandler
     private $getUpdatesQueue;
     private int $getUpdatesQueueKey = 0;
     private SplQueue $updateQueue;
+    /** Whether the updates postponed while the event handler is starting will be handled once it started. */
+    private bool $updateQueueReplay = false;
 
     /**
      * Set NOOP update handler, ignoring all updates.
@@ -224,11 +236,7 @@ trait UpdateHandler
         if ($f = $this->event_handler_instance->waitForInternalStart()) {
             $this->logger->logger("Postponing update handling, onStart is still running (if stuck here for too long, make sure to fork long-running tasks in onStart using \$this->callFork(function () { ... }) to fix this)...", Logger::NOTICE);
             $this->updateQueue->enqueue($update);
-            $f->map(function (): void {
-                foreach ($this->updateQueue as $update) {
-                    $this->handleUpdate($update);
-                }
-            });
+            $this->handlePostponedUpdates($f);
             return;
         }
         if (\count($this->eventHandlerHandlers) !== 0 && \is_array($update)) {
@@ -398,7 +406,10 @@ trait UpdateHandler
      * Check message ID.
      *
      * @param array $message Message
+     *
      * @internal
+     *
+     * @psalm-external-mutation-free
      */
     public function checkMsgId(array $message): bool
     {
@@ -431,8 +442,12 @@ trait UpdateHandler
      *
      * @param null|int $channelId Channel ID
      * @param array    $init      Init
+     *
      * @internal
+     *
      * @return UpdatesState|array<UpdatesState>
+     *
+     * @psalm-external-mutation-free
      */
     public function loadChannelState(?int $channelId = null, array $init = []): UpdatesState|array
     {
@@ -475,6 +490,11 @@ trait UpdateHandler
                     : new InlineButtonQuery($this, $update),
                 'updateBotInlineQuery' => new InlineQuery($this, $update),
                 'updatePhoneCall' => $update['phone_call'],
+                'updateGroupCall' => $this->wrapGroupCall($update),
+                'updateGroupCallParticipants' => new GroupCallParticipants($this, $update),
+                'updateGroupCallMessage' => MultiCallMessage::fromUpdate($this, $update),
+                'updateDeleteGroupCallMessages' => new GroupCallMessagesDeleted($this, $update),
+                'updateCallStreams' => new CallStreams($this, $update),
                 'updateBroadcastProgress' => $update['progress'],
                 'updateStory' => $update['story']['_'] === 'storyItemDeleted'
                     ? new StoryDeleted($this, $update)
@@ -510,6 +530,29 @@ trait UpdateHandler
             return null;
         }
     }
+    /**
+     * The handle of the call an updateGroupCall is about: the one we track, or else a fresh one built
+     * from the groupCall the update carries (a conference handle for a conference).
+     */
+    private function wrapGroupCall(array $update): AbstractGroupCall|ConferenceCallUpdate
+    {
+        $call = $update['call'];
+        $id = $call['id'];
+        if (isset($this->conferenceCalls[$id])) {
+            return $this->conferenceCalls[$id]->getPublic();
+        }
+        if (isset($this->groupCalls[$id])) {
+            return $this->groupCalls[$id]->public;
+        }
+        if ($call['conference'] ?? false) {
+            return new ConferenceCallUpdate($this, $call);
+        }
+        $peerId = isset($update['peer']) ? $this->getIdInternal($update['peer']) : null;
+        return ($update['live_story'] ?? false)
+            ? new LiveStory($this, $call, $peerId)
+            : new GroupCallUpdate($this, $call, $peerId);
+    }
+
     /**
      * Wrap a Pin constructor into an abstract Pinned object.
      */
@@ -655,6 +698,17 @@ trait UpdateHandler
                     $message,
                     $info,
                     $message['action']['duration'] ?? null,
+                ),
+                'messageActionConferenceCall' => new DialogConferenceCall(
+                    $this,
+                    $message,
+                    $info,
+                    $message['action']['call_id'],
+                    $message['action']['missed'] ?? false,
+                    $message['action']['active'] ?? false,
+                    $message['action']['video'] ?? false,
+                    $message['action']['duration'] ?? null,
+                    array_values(array_filter(array_map($this->getIdInternal(...), $message['action']['other_participants'] ?? []))),
                 ),
                 'messageActionInviteToGroupCall' => new GroupCallInvited(
                     $this,
@@ -1209,13 +1263,25 @@ trait UpdateHandler
                 EventLoop::queue($this->calls[$update['phone_call_id']]->onSignaling(...), (string) $update['data']);
             }
         }
+        if ($update['_'] === 'updateGroupCall'
+            || $update['_'] === 'updateGroupCallParticipants'
+            || $update['_'] === 'updateGroupCallChainBlocks'
+            || $update['_'] === 'updateGroupCallEncryptedMessage'
+        ) {
+            // Group call updates must be applied synchronously and in order, exclusively from here:
+            // never invoke the controller's handlers directly, or a version gap could be filled out
+            // of sequence. updateGroupCallConnection is not handled here: it carries no call ID and
+            // is only ever returned by phone.joinGroupCall, so it is extracted from that response.
+            // The chain-block and encrypted-message updates drive end-to-end conference calls.
+            $this->handleGroupCallUpdate($update);
+        }
         if ($update['_'] === 'updatePhoneCall') {
             switch ($update['phone_call']['_']) {
                 case 'phoneCallRequested':
                     if (isset($this->calls[$update['phone_call']['id']])) {
                         return;
                     }
-                    $this->calls[$update['phone_call']['id']] = $controller = new VoIPController(
+                    $this->calls[$update['phone_call']['id']] = $controller = new PrivateCallController(
                         $this,
                         $update['phone_call'],
                     );
@@ -1226,7 +1292,7 @@ trait UpdateHandler
                     if (isset($this->calls[$update['phone_call']['id']])) {
                         return;
                     }
-                    $this->calls[$update['phone_call']['id']] = $controller = new VoIPController(
+                    $this->calls[$update['phone_call']['id']] = $controller = new PrivateCallController(
                         $this,
                         $update['phone_call']
                     );
@@ -1254,7 +1320,7 @@ trait UpdateHandler
                         return;
                     }
                     $controller = $this->calls[$update['phone_call']['id']];
-                    $controller->discard();
+                    $controller->onDiscarded($update['phone_call']);
                     $update['phone_call'] = $controller->public;
                     break;
                 case 'phoneCallEmpty':
@@ -1342,12 +1408,34 @@ trait UpdateHandler
 
         $this->handleUpdate($update);
     }
+    /**
+     * Handle the updates postponed while the event handler is starting, once it started.
+     *
+     * @param Future<mixed> $started
+     */
+    private function handlePostponedUpdates(Future $started): void
+    {
+        if ($this->updateQueueReplay) {
+            return;
+        }
+        $this->updateQueueReplay = true;
+        $started->map(function (): void {
+            $this->updateQueueReplay = false;
+            // Only the updates postponed until now: if the event handler failed to start, they're postponed again
+            // until it's started again, instead of being postponed and handled again in an endless loop.
+            for ($x = $this->updateQueue->count(); $x > 0; $x--) {
+                $this->handleUpdate($this->updateQueue->dequeue());
+            }
+        });
+    }
     private ?BetterCounter $updateCtr;
     private function handleUpdate(array $update): void
     {
         $this->updateCtr?->inc(['type' => $update['_']]);
         /** @var UpdateHandlerType::EVENT_HANDLER|UpdateHandlerType::WEBHOOK|UpdateHandlerType::GET_UPDATES $this->updateHandlerType */
         match ($this->updateHandlerType) {
+            // Custom events can be sent before an update handler is set (for example, in the onStart of the event handler).
+            UpdateHandlerType::NOOP => null,
             UpdateHandlerType::EVENT_HANDLER => $this->eventUpdateHandler($update),
             UpdateHandlerType::WEBHOOK => EventLoop::queue($this->pwrWebhook(...), $update),
             UpdateHandlerType::GET_UPDATES => EventLoop::queue($this->addGetUpdatesUpdate(...), $update),

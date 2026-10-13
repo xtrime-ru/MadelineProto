@@ -34,6 +34,8 @@ final class Publisher
     private bool $wokeup = false;
     /**
      * @param T $state
+     *
+     * @psalm-mutation-free
      */
     public function __construct(
         private mixed $state
@@ -98,6 +100,12 @@ final class Publisher
             $this->subscribers[$subscriberK] = $subscriber;
             $subscriber->onAttach($this->state);
         }
+    }
+
+    /** @param BaseSubscriber<T> $subscriber */
+    public function unsubscribe(BaseSubscriber $subscriber): void
+    {
+        unset($this->subscribers[$subscriber]);
     }
 
     /** @param T $state */

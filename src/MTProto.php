@@ -51,6 +51,7 @@ use danog\BetterPrometheus\BetterGauge;
 use danog\BetterPrometheus\BetterHistogram;
 use danog\BetterPrometheus\BetterSummary;
 use danog\MadelineProto\Broadcast\Broadcast;
+use danog\MadelineProto\EventHandler\Calls\GroupCallState;
 use danog\MadelineProto\EventHandler\Message;
 use danog\MadelineProto\Ipc\Server;
 use danog\MadelineProto\Loop\Generic\PeriodicLoopInternal;
@@ -69,6 +70,7 @@ use danog\MadelineProto\MTProtoTools\PeerDatabase;
 use danog\MadelineProto\MTProtoTools\PeerHandler;
 use danog\MadelineProto\MTProtoTools\ReferenceDatabase;
 use danog\MadelineProto\MTProtoTools\ResponseInfo;
+use danog\MadelineProto\MTProtoTools\ResumableCalls;
 use danog\MadelineProto\MTProtoTools\UpdateHandler;
 use danog\MadelineProto\Reactive\Publisher;
 use danog\MadelineProto\Settings\Database\DriverDatabaseAbstract;
@@ -128,6 +130,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     use BotAPIFiles;
     use TD;
     use \danog\MadelineProto\VoIP\AuthKeyHandler;
+    use \danog\MadelineProto\GroupCall\Handler;
     use Ads;
     use Button;
     use DialogHandler;
@@ -140,6 +143,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
         LegacyMigrator::saveDbProperties as private internalSaveDbProperties;
     }
     use Broadcast;
+    use ResumableCalls;
     private const MAX_ENTITY_LENGTH = 100;
     private const MAX_ENTITY_SIZE = 8110;
     /** @internal */
@@ -421,6 +425,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Returns an instance of a client by session name.
      *
      * @internal
+     *
+     * @psalm-external-mutation-free
      */
     public static function giveInstanceBySession(string $session): MTProto
     {
@@ -485,6 +491,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
 
     /**
      * @internal
+     *
+     * @psalm-mutation-free
      */
     public function findRsaKey(array $fps, bool $test, bool $cdn): ?RSA
     {
@@ -580,6 +588,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Returns null if prometheus stats are disabled.
      *
      * @param array<string, string> $labels
+     *
+     * @psalm-external-mutation-free
      */
     public function getPromGauge(string $namespace, string $name, string $help, array $labels = []): ?BetterGauge
     {
@@ -600,6 +610,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Returns null if prometheus stats are disabled.
      *
      * @param array<string, string> $labels
+     *
+     * @psalm-external-mutation-free
      */
     public function getPromCounter(string $namespace, string $name, string $help, array $labels = []): ?BetterCounter
     {
@@ -621,6 +633,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      *
      * @param array<string, string> $labels
      * @param ?non-empty-list<float> $quantiles
+     *
+     * @psalm-external-mutation-free
      */
     public function getPromSummary(string $namespace, string $name, string $help, array $labels = [], int $maxAgeSeconds = 600, ?array $quantiles = null): ?BetterSummary
     {
@@ -644,6 +658,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      *
      * @param array<string, string> $labels
      * @param ?non-empty-list<float> $buckets
+     *
+     * @psalm-external-mutation-free
      */
     public function getPromHistogram(string $namespace, string $name, string $help, array $labels = [], ?array $buckets = null): ?BetterHistogram
     {
@@ -710,6 +726,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Returns the session name.
+     *
+     * @psalm-mutation-free
      */
     public function getSessionName(): string
     {
@@ -718,7 +736,11 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
 
     private ?string $tmpDbPrefix = null;
 
-    /** @internal */
+    /**
+     * @internal
+     *
+     * @psalm-external-mutation-free
+     */
     public function getDbPrefix(): string
     {
         $prefix = null;
@@ -742,6 +764,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Sleep function.
      *
      * @internal
+     *
+     * @psalm-external-mutation-free
      */
     public function __sleep(): array
     {
@@ -818,8 +842,14 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             // Report URI
             'reportDest',
 
+            // Interrupted uploads, and the calls that made them
+            'resumableUploads',
+            'resumableCalls',
+
             'calls',
             'callsByPeer',
+            'groupCalls',
+            'conferenceCalls',
             'snitch',
 
             'seqUpdater',
@@ -834,6 +864,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * @param mixed  $param Parameter
      * @param int    $level Logging level
      * @param string $file  File where the message originated
+     *
+     * @psalm-external-mutation-free
      */
     public function logger(mixed $param, int $level = Logger::NOTICE, string $file = ''): void
     {
@@ -844,6 +876,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get TL namespaces.
+     *
+     * @psalm-mutation-free
      */
     public function getMethodNamespaces(): array
     {
@@ -851,6 +885,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get namespaced methods (method => namespace).
+     *
+     * @psalm-mutation-free
      */
     public function getMethodsNamespaced(): array
     {
@@ -858,6 +894,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get TL serializer.
+     *
+     * @internal
      */
     public function getTL(): TLInterface
     {
@@ -873,6 +911,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get PSR logger.
+     *
+     * @psalm-mutation-free
      */
     public function getPsrLogger(): LoggerInterface
     {
@@ -880,6 +920,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get async HTTP client.
+     *
+     * @psalm-mutation-free
      */
     public function getHTTPClient(): HttpClient
     {
@@ -888,6 +930,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
 
     /**
      * Get async DNS client.
+     *
+     * @psalm-mutation-free
      */
     public function getDNSClient(): DnsResolver
     {
@@ -906,6 +950,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Get main DC ID.
      *
      * @internal
+     *
+     * @psalm-mutation-free
      */
     public function getDataCenterId(): int|string
     {
@@ -995,6 +1041,9 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             );
             $this->promServer->expose($endpoint);
             $this->promServer->start(new class($this) implements RequestHandler {
+                /**
+                 * @psalm-mutation-free
+                 */
                 public function __construct(
                     private readonly MTProto $API
                 ) {
@@ -1218,7 +1267,9 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             $this->loginState->wakeup();
 
             // Connect to all DCs, start internal loops
+            $loggedIn = false;
             if ($this->fullGetSelf()) {
+                $loggedIn = true;
                 $this->setupLogger();
                 $this->startLoops();
                 $this->getCdnConfig();
@@ -1233,16 +1284,15 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             if ($this->event_handler_instance instanceof EventHandler
                 && $f = $this->event_handler_instance->waitForInternalStart()
             ) {
-                $f->map(function (): void {
-                    foreach ($this->updateQueue as $update) {
-                        $this->handleUpdate($update);
-                    }
-                });
+                $this->handlePostponedUpdates($f);
             }
             $this->cacheFullDialogs();
 
             foreach ($this->broadcasts as $broadcast) {
                 $broadcast->resume();
+            }
+            if ($loggedIn) {
+                $this->resumeCalls();
             }
 
             foreach ($this->calls as $id => $call) {
@@ -1250,6 +1300,12 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
                     $this->cleanupCall($id);
                 } elseif ($call->getCallState() === CallState::REQUESTED && time() - $call->public->date > 5*60) {
                     EventLoop::queue($call->discard(...));
+                }
+            }
+
+            foreach ($this->groupCalls as $id => $groupCall) {
+                if ($groupCall->getCallState() === GroupCallState::LEFT) {
+                    $this->cleanupGroupCall($id);
                 }
             }
         } catch (Throwable $e) {
@@ -1337,6 +1393,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Whether we're an IPC client instance.
+     *
+     * @psalm-pure
      */
     public function isIpc(): bool
     {
@@ -1344,6 +1402,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Whether we're an IPC server process (as opposed to an event handler).
+     *
+     * @psalm-external-mutation-free
      */
     public function isIpcWorker(): bool
     {
@@ -1550,6 +1610,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Parse cached config.
+     *
+     * @psalm-external-mutation-free
      */
     private function parseConfig(): void
     {
@@ -1563,6 +1625,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Whether we're currently connected to the test DCs.
      *
      * @return boolean
+     *
+     * @psalm-mutation-free
      */
     public function isTestMode(): bool
     {
@@ -1572,6 +1636,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Parse DC options from config.
      *
      * @param array $dc_options DC options
+     *
+     * @psalm-external-mutation-free
      */
     private function parseDcOptions(array $dc_options): void
     {
@@ -1599,6 +1665,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Get info about the logged-in user, cached.
      *
      * Use fullGetSelf to bypass the cache.
+     *
+     * @psalm-mutation-free
      */
     public function getSelf(): array|false
     {
@@ -1606,6 +1674,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Returns whether the current user is a bot.
+     *
+     * @psalm-mutation-free
      */
     public function isSelfBot(): bool
     {
@@ -1616,6 +1686,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Returns whether the current user is a user.
+     *
+     * @psalm-mutation-free
      */
     public function isSelfUser(): bool
     {
@@ -1623,6 +1695,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Returns whether the current user is a premium user, cached.
+     *
+     * @psalm-mutation-free
      */
     public function isPremium(): bool
     {
@@ -1645,6 +1719,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
      * Get authorization info.
      *
      * @return \danog\MadelineProto\API::NOT_LOGGED_IN|\danog\MadelineProto\API::WAITING_CODE|\danog\MadelineProto\API::WAITING_SIGNUP|\danog\MadelineProto\API::WAITING_PASSWORD|\danog\MadelineProto\API::LOGGED_IN|API::LOGGED_OUT
+     *
+     * @psalm-mutation-free
      */
     public function getAuthorization(): int
     {
@@ -1652,6 +1728,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get current password hint.
+     *
+     * @psalm-mutation-free
      */
     public function getHint(): string
     {
@@ -1675,6 +1753,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     private array $admins = [];
     /**
      * Check if has report peers.
+     *
+     * @psalm-mutation-free
      */
     public function hasReportPeers(): bool
     {
@@ -1682,6 +1762,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Check if has admins.
+     *
+     * @psalm-mutation-free
      */
     public function hasAdmins(): bool
     {
@@ -1999,6 +2081,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-pure
      */
     #[\Override]
     public function getMethodAfterResponseDeserializationCallbacks(): array
@@ -2007,6 +2091,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-pure
      */
     #[\Override]
     public function getMethodBeforeResponseDeserializationCallbacks(): array
@@ -2015,6 +2101,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-external-mutation-free
      */
     public function populateSupportUser(array $support): void
     {
@@ -2022,6 +2110,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-external-mutation-free
      */
     public function populateConfig(array $config): void
     {
@@ -2039,6 +2129,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-mutation-free
      */
     #[\Override]
     public function getConstructorAfterDeserializationCallbacks(): array
@@ -2051,6 +2143,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-pure
      */
     #[\Override]
     public function getConstructorBeforeDeserializationCallbacks(): array
@@ -2059,6 +2153,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-pure
      */
     #[\Override]
     public function getConstructorBeforeSerializationCallbacks(): array
@@ -2067,6 +2163,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * @internal
+     *
+     * @psalm-mutation-free
      */
     #[\Override]
     public function getTypeMismatchCallbacks(): array
@@ -2112,6 +2210,8 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     }
     /**
      * Get debug information for var_dump.
+     *
+     * @psalm-mutation-free
      */
     public function __debugInfo(): array
     {
