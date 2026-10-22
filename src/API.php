@@ -28,10 +28,13 @@ use Amp\Ipc\Sync\ChannelledSocket;
 use Amp\SignalException;
 use Amp\TimeoutException;
 use danog\MadelineProto\ApiWrappers\Start;
+use danog\MadelineProto\Ipc\AlreadyServedException;
 use danog\MadelineProto\Ipc\Client;
 use danog\MadelineProto\Ipc\Server;
 use danog\MadelineProto\Settings\Ipc as SettingsIpc;
 use danog\MadelineProto\Settings\Logger as SettingsLogger;
+use danog\MadelineProto\Settings\Templates;
+use danog\MadelineProto\WebUI\WebUI;
 use Revolt\EventLoop;
 use Revolt\EventLoop\UncaughtThrowable;
 use Throwable;
@@ -51,7 +54,7 @@ final class API extends AbstractAPI
      *
      * @var string
      */
-    public const RELEASE = '8.7.0';
+    public const RELEASE = '8.11.10';
     /**
      * We're not logged in.
      *
@@ -165,25 +168,6 @@ final class API extends AbstractAPI
     private $unlock = null;
 
     /**
-     * Obtain the API ID UI template.
-     *
-     * @psalm-mutation-free
-     */
-    public function getWebAPITemplate(): string
-    {
-        return $this->wrapper->getWebApiTemplate();
-    }
-    /**
-     * Set the API ID UI template.
-     *
-     * @psalm-external-mutation-free
-     */
-    public function setWebApiTemplate(string $template): void
-    {
-        $this->wrapper->setWebApiTemplate($template);
-    }
-
-    /**
      * Constructor function.
      *
      * @param string           $session  Session name
@@ -193,6 +177,17 @@ final class API extends AbstractAPI
     {
         Magic::start(light: true);
         $settings ??= new SettingsEmpty;
+        // The assets of the web UI (scripts, animations...), requested by its pages from this same script
+        if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && isset($_GET[WebUI::ASSET_PARAMETER])) {
+            $templates = match (true) {
+                $settings instanceof Settings => $settings->getTemplates(),
+                $settings instanceof Templates => $settings,
+                default => new Templates,
+            };
+            if (WebUI::serveAsset($templates)) {
+                die;
+            }
+        }
         $this->session = new SessionPaths($session);
         $this->wrapper = new APIWrapper($this->session);
         $this->exportNamespaces();
@@ -226,6 +221,8 @@ final class API extends AbstractAPI
             $appInfo->setApiId($app['api_id']);
             $appInfo->setApiHash($app['api_hash']);
         }
+        // Set without finishing the web setup (in the settings, for example): drop its my.telegram.org login
+        $this->session->storeApiSetupState(null);
         $this->wrapper->setAPI(new MTProto($settings, $this->wrapper));
         $this->wrapper->logger('Prompting initial serialization...');
         $this->wrapper->serialize();
@@ -290,7 +287,8 @@ final class API extends AbstractAPI
                         }
                         $this->wrapper->logger("Restarting to full instance: error in stop loop $e");
                     }
-                    EventLoop::queue($cb);
+                    // Repeated until we get the session, but not right away: it spun as long as a server accepted connections without stopping
+                    EventLoop::delay(1.0, static fn () => $cb());
                 }
             };
             EventLoop::queue($cb);
@@ -312,21 +310,35 @@ final class API extends AbstractAPI
         } elseif ($settings instanceof Settings) {
             $forceFull = $forceFull || $settings->getIpc()->getSlow();
         }
-        $forceFull = $forceFull || isset($_GET['MadelineSelfRestart']) || Magic::$altervista;
+        $selfRestart = !$forceFull && isset($_GET['MadelineSelfRestart']) && !Magic::$altervista;
+        $forceFull = $forceFull || $selfRestart || Magic::$altervista;
 
-        try {
-            [$unserialized, $this->unlock] = async(
-                Serialization::unserialize(...),
-                $this->session,
-                $settings,
-                $forceFull
-            )->await(Tools::getTimeoutCancellation(30.0, "Timeout during session unserialization!"));
-        } catch (CancelledException $e) {
-            if (!$e->getPrevious() instanceof TimeoutException) {
-                throw $e;
+        $future = async(
+            Serialization::unserialize(...),
+            $this->session,
+            $settings,
+            $forceFull,
+            $selfRestart,
+        );
+        while (true) {
+            try {
+                [$unserialized, $this->unlock] = $future->await(Tools::getTimeoutCancellation(30.0, "Timeout during session unserialization!"));
+                break;
+            } catch (CancelledException $e) {
+                if (!$e->getPrevious() instanceof TimeoutException) {
+                    throw $e;
+                }
+                // The lock holder is alive (a lock dies with its process): it's loading the session, which
+                // can take a while with a big database, and serves it once it's done, or it's shutting down
+                // to let us in. Either way, giving up now would fail a startup that is going well.
+                if (Serialization::isLockedByAnotherProcess($this->session)) {
+                    Logger::log('The session is still locked by another process (loading or releasing it), waiting...');
+                    continue;
+                }
+                $future->ignore();
+                [$unserialized, $this->unlock] = [0, null];
+                break;
             }
-
-            [$unserialized, $this->unlock] = [0, null];
         }
 
         if ($unserialized === 0) {
@@ -336,8 +348,24 @@ final class API extends AbstractAPI
             // IPC server error
             throw $unserialized;
         } elseif ($unserialized instanceof ChannelledSocket) {
+            if (Magic::$isIpcWorker) {
+                // A worker is only useful as the server: as a client, it would wait for a shutdown forever.
+                $unserialized->disconnect();
+                throw new AlreadyServedException("Another process is already serving the session {$this->session->getSessionDirectoryPath()}");
+            }
             // Success, IPC client
-            $this->wrapper->setAPI(new Client($unserialized, $this->session, Logger::$default));
+            Server::warnIfOverTcp($this->session);
+            $this->wrapper->setAPI($client = new Client($unserialized, $this->session, Logger::$default));
+            if (\defined('MADELINE_PHAR') && \defined('MADELINE_PHAR_VERSION') && \defined('MADELINE_PHP')) {
+                // Short-lived clients (like dl.php) exit before completing the update check, and their phars may be
+                // in another directory than the worker's: the worker brings both to the newest release.
+                try {
+                    $client->syncIpcClientPhar(self::RELEASE, \MADELINE_PHAR, \MADELINE_PHAR_VERSION, \MADELINE_PHP);
+                } catch (Throwable $e) {
+                    // Workers older than this method
+                    Logger::log("Could not sync the phar with the IPC server: $e", Logger::NOTICE);
+                }
+            }
             return true;
         } elseif ($unserialized) {
             // Success, full session
@@ -351,7 +379,14 @@ final class API extends AbstractAPI
                 if ($settings instanceof SettingsIpc) {
                     $settings = new SettingsEmpty;
                 }
-                $this->wrapper->getAPI()->wakeup($settings, $this->wrapper);
+                try {
+                    $this->wrapper->getAPI()->wakeup($settings, $this->wrapper);
+                } catch (Throwable $e) {
+                    // Not saved at shutdown (by serializeAll() or the destructor): the session on disk is the one
+                    // that failed to wake up, a half-initialized instance must not overwrite it.
+                    $this->wrapper->setAPI(null);
+                    throw $e;
+                }
                 $this->wrapper->logger(Lang::$current_lang['madelineproto_ready'], Logger::NOTICE);
                 return true;
             }

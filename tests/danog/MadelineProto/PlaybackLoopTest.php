@@ -26,10 +26,11 @@ use danog\MadelineProto\Tgcalls\CallControllerInterface;
 use danog\MadelineProto\Tgcalls\OpusPlaybackTrack;
 use danog\MadelineProto\Tgcalls\VideoPlaybackTrack;
 use PHPUnit\Framework\TestCase;
+use Webrtc\AVCodec\Frame\FrameInterface;
 use Webrtc\Codecs\EncodedPacket;
 use Webrtc\RTP\MediaStreamTrack\MediaStreamTrack;
+use Webrtc\RTP\MediaStreamTrack\MediaStreamTrackSink;
 
-use function Amp\async;
 use function Amp\delay;
 
 /**
@@ -49,17 +50,17 @@ final class PlaybackLoopTest extends TestCase
     }
 
     /** A Matroska file with a VP8 and an OPUS track, whose audio outlasts its video. */
-    private static function buildFile(): string
+    private static function buildFile(int $videoFrames = self::VIDEO_FRAMES, int $audioFrames = self::AUDIO_FRAMES): string
     {
         $video = self::element("\xD7", "\x01").self::element("\x83", "\x01").self::element("\x86", 'V_VP8');
         $audio = self::element("\xD7", "\x02").self::element("\x83", "\x02").self::element("\x86", 'A_OPUS');
         $tracks = self::element("\x16\x54\xAE\x6B", self::element("\xAE", $video).self::element("\xAE", $audio));
         $info = self::element("\x15\x49\xA9\x66", self::element("\x2A\xD7\xB1", "\x0F\x42\x40"));
         $blocks = [];
-        for ($x = 0; $x < self::VIDEO_FRAMES; $x++) {
+        for ($x = 0; $x < $videoFrames; $x++) {
             $blocks[] = [$x * 33, self::element("\xA3", "\x81".pack('n', $x * 33)."\x80"."VIDEO$x")];
         }
-        for ($x = 0; $x < self::AUDIO_FRAMES; $x++) {
+        for ($x = 0; $x < $audioFrames; $x++) {
             $blocks[] = [$x * 20, self::element("\xA3", "\x82".pack('n', $x * 20)."\x80"."AUDIO$x")];
         }
         usort($blocks, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
@@ -68,21 +69,13 @@ final class PlaybackLoopTest extends TestCase
     }
 
     /**
-     * Collect the RTP timestamps a track emits until it is stopped.
-     *
-     * @return \Amp\Future<list<int>>
+     * Collect the packets a track emits, like an RTP sender would.
      */
-    private static function collect(MediaStreamTrack $track): \Amp\Future
+    private static function collect(MediaStreamTrack $track): PlaybackLoopTestSink
     {
-        return async(static function () use ($track): array {
-            $timestamps = [];
-            foreach ($track->getConsumer() as $packet) {
-                if ($packet instanceof EncodedPacket) {
-                    $timestamps[] = $packet->getTimestamp();
-                }
-            }
-            return $timestamps;
-        });
+        $sink = new PlaybackLoopTestSink;
+        $track->setSink($sink);
+        return $sink;
     }
 
     /** @param list<int> $timestamps */
@@ -117,8 +110,8 @@ final class PlaybackLoopTest extends TestCase
             $video->stop();
             $dj->discard();
 
-            $audioTimestamps = $audioTimestamps->await();
-            $videoTimestamps = $videoTimestamps->await();
+            $audioTimestamps = $audioTimestamps->timestamps();
+            $videoTimestamps = $videoTimestamps->timestamps();
         } finally {
             unlink($path);
         }
@@ -131,6 +124,133 @@ final class PlaybackLoopTest extends TestCase
         self::assertEqualsWithDelta($loops * self::AUDIO_FRAMES, \count($audioTimestamps), 2 * self::AUDIO_FRAMES, 'audio packets');
         self::assertEqualsWithDelta($loops * self::VIDEO_FRAMES, \count($videoTimestamps), 2 * self::VIDEO_FRAMES, 'video packets');
     }
+
+    public function testATrackKeepsUpWithoutLookahead(): void
+    {
+        Magic::start(light: true);
+        $path = tempnam(sys_get_temp_dir(), 'pace').'.webm';
+        // 3 seconds.
+        file_put_contents($path, self::buildFile(90, 150));
+        try {
+            // Each frame is read only once the previous one of its track was played.
+            $call = new PlaybackLoopTestCall(lookahead: 0);
+            $dj = new DjLoop($call);
+            $audio = new OpusPlaybackTrack($dj, $call);
+            $video = new VideoPlaybackTrack($dj, $call);
+            $audioLateness = self::collect($audio);
+            $videoLateness = self::collect($video);
+            $dj->play(new LocalFile($path));
+
+            delay(3.5);
+            $call->ended = true;
+            $audio->stop();
+            $video->stop();
+            $dj->discard();
+
+            $audioLateness = $audioLateness->lateness(DjLoop::AUDIO_CLOCK_RATE);
+            $videoLateness = $videoLateness->lateness(DjLoop::VIDEO_CLOCK_RATE);
+        } finally {
+            unlink($path);
+        }
+        self::assertCount(150, $audioLateness, 'audio packets');
+        self::assertCount(90, $videoLateness, 'video packets');
+        // A track that has to wait for the reader to read its next frame, after it was due, falls
+        // behind a bit more with every frame: by the end of the file, it was seconds behind.
+        self::assertLessThan(0.2, max($audioLateness), 'how late the audio is played, at most');
+        self::assertLessThan(0.2, max($videoLateness), 'how late the video is played, at most');
+    }
+
+    public function testATrackConsumedLateDoesNotBurst(): void
+    {
+        Magic::start(light: true);
+        $path = tempnam(sys_get_temp_dir(), 'late').'.webm';
+        file_put_contents($path, self::buildFile(90, 150));
+        try {
+            $call = new PlaybackLoopTestCall(lookahead: 0);
+            $dj = new DjLoop($call);
+            $audio = new OpusPlaybackTrack($dj, $call);
+            $video = new VideoPlaybackTrack($dj, $call);
+            $dj->play(new LocalFile($path));
+            // As when the call connects, a while after the tracks started playing.
+            delay(1.5);
+            $start = hrtime(true) / 1e9;
+            $audioLateness = self::collect($audio);
+            $videoLateness = self::collect($video);
+
+            delay(1.0);
+            $call->ended = true;
+            $audio->stop();
+            $video->stop();
+            $dj->discard();
+
+            $audioLateness = $audioLateness->lateness(DjLoop::AUDIO_CLOCK_RATE);
+            $videoLateness = $videoLateness->lateness(DjLoop::VIDEO_CLOCK_RATE);
+        } finally {
+            unlink($path);
+        }
+        // The frames that were due while nobody took them are not sent all at once, but at their pace:
+        // about a second of frames in a second.
+        self::assertLessThan(60, \count($audioLateness), 'audio packets in the first second');
+        self::assertLessThan(36, \count($videoLateness), 'video packets in the first second');
+    }
+
+    /**
+     * Wait for the DJ to play a file (null for nothing), for less than a file lasts.
+     */
+    private static function assertPlaying(DjLoop $dj, ?string $path, string $message): void
+    {
+        for ($x = 0; $x < 25; $x++) {
+            $current = $dj->getCurrent();
+            $current = $current instanceof LocalFile ? $current->file : $current;
+            if ($current === $path) {
+                break;
+            }
+            delay(0.01);
+        }
+        self::assertSame($path, $current, $message);
+    }
+
+    public function testNewHoldFilesReplaceThePlayingOne(): void
+    {
+        Magic::start(light: true);
+        $paths = [];
+        foreach (['a', 'b', 'c'] as $name) {
+            $paths[$name] = tempnam(sys_get_temp_dir(), 'hold').'.webm';
+            file_put_contents($paths[$name], self::buildFile());
+        }
+        try {
+            // No lookahead: the files are read as they are played.
+            $call = new PlaybackLoopTestCall(lookahead: 0);
+            $dj = new DjLoop($call);
+            $audio = new OpusPlaybackTrack($dj, $call);
+            $video = new VideoPlaybackTrack($dj, $call);
+            $audioTimestamps = self::collect($audio);
+            $videoTimestamps = self::collect($video);
+
+            $dj->playOnHold(new LocalFile($paths['a']));
+            self::assertPlaying($dj, $paths['a'], 'The hold file should play');
+            $dj->playOnHold(new LocalFile($paths['b']));
+            self::assertPlaying($dj, $paths['b'], 'The new hold file should replace the playing one');
+
+            $dj->play(new LocalFile($paths['c']));
+            self::assertPlaying($dj, $paths['c'], 'The playlist should interrupt the hold file');
+            $dj->playOnHold(new LocalFile($paths['a']));
+            delay(0.1);
+            self::assertPlaying($dj, $paths['c'], 'New hold files should not interrupt the playlist');
+            $dj->skip();
+            self::assertPlaying($dj, $paths['a'], 'The new hold file should play once the playlist is over');
+
+            $dj->playOnHold();
+            self::assertPlaying($dj, null, 'Removing the hold files should stop the playing one');
+
+            $call->ended = true;
+            $audio->stop();
+            $video->stop();
+            $dj->discard();
+        } finally {
+            array_map(unlink(...), $paths);
+        }
+    }
 }
 
 /**
@@ -139,6 +259,10 @@ final class PlaybackLoopTest extends TestCase
 final class PlaybackLoopTestCall implements CallControllerInterface
 {
     public bool $ended = false;
+
+    public function __construct(private readonly int $lookahead = 2000)
+    {
+    }
 
     public function log(string $message, int $level = Logger::NOTICE): void
     {
@@ -149,8 +273,55 @@ final class PlaybackLoopTestCall implements CallControllerInterface
         return $this->ended;
     }
 
+    public function getVoIPSettings(): \danog\MadelineProto\Settings\VoIP
+    {
+        // Read ahead by default, so that frames are queued.
+        return (new \danog\MadelineProto\Settings\VoIP)->setPlaybackLookahead($this->lookahead);
+    }
+
     public function __toString(): string
     {
         return 'test call';
+    }
+}
+
+/**
+ * Takes the packets of a track, like an RTP sender would.
+ *
+ * @internal
+ */
+final class PlaybackLoopTestSink implements MediaStreamTrackSink
+{
+    /** @var list<array{float, int}> When each packet was emitted, and its RTP timestamp. */
+    private array $packets = [];
+
+    public function onFrame(FrameInterface|EncodedPacket $frame): bool
+    {
+        \assert($frame instanceof EncodedPacket);
+        $this->packets[] = [hrtime(true) / 1e9, $frame->getTimestamp()];
+        return true;
+    }
+
+    /** @return list<int> */
+    public function timestamps(): array
+    {
+        return array_column($this->packets, 1);
+    }
+
+    /**
+     * How late each packet was emitted: when, minus when it was due according to its timestamp,
+     * relative to the first one, in seconds.
+     *
+     * @return list<float>
+     */
+    public function lateness(int $clockRate): array
+    {
+        $lateness = [];
+        $first = $this->packets[0] ?? null;
+        foreach ($this->packets as [$time, $timestamp]) {
+            \assert($first !== null);
+            $lateness[] = $time - $first[0] - ($timestamp - $first[1]) / $clockRate;
+        }
+        return $lateness;
     }
 }

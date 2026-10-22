@@ -26,6 +26,7 @@ use danog\MadelineProto\Logger;
 use danog\MadelineProto\Loop\VoIP\DjLoop;
 use danog\MadelineProto\RecordingEvent;
 use danog\MadelineProto\RecordingFormat;
+use danog\MadelineProto\RestoresDeclaredProperties;
 use danog\MadelineProto\Tgcalls\E2E\FrameCryptor;
 use Throwable;
 use Webrtc\DataChannel\Enum\State;
@@ -67,6 +68,7 @@ use Webrtc\Webrtc\RTCPeerConnection;
  */
 final class GroupConnection implements VideoCodecObserver, PeerConnectionTrackListener, PeerConnectionConnectionStateChangeListener, DataChannelOpenListener, DataChannelMessageListener, IncomingMediaObserver
 {
+    use RestoresDeclaredProperties;
     /** Colibri video-quality tiers, in pixels of height: thumbnail, medium and full. */
     private const HEIGHT_THUMBNAIL = 180;
     private const HEIGHT_MEDIUM = 360;
@@ -161,6 +163,12 @@ final class GroupConnection implements VideoCodecObserver, PeerConnectionTrackLi
 
     /** End-to-end frame cryptor for an encrypted conference; null for an ordinary (SFU-trusted) call. */
     private ?FrameCryptorInterface $frameCryptor = null;
+
+    /**
+     * What we last told the server through this connection: whether our video is stopped (or, for the
+     * screen-share, paused); null if nothing yet, or if the server did not take it.
+     */
+    private ?bool $videoStopped = null;
 
     private bool $closed = false;
     private bool $renegotiating = false;
@@ -258,9 +266,7 @@ final class GroupConnection implements VideoCodecObserver, PeerConnectionTrackLi
      */
     public function __unserialize(array $data): void
     {
-        foreach ($data as $key => $value) {
-            $this->{$key} = $value;
-        }
+        $this->restoreDeclaredProperties($data);
     }
 
     /**
@@ -368,13 +374,7 @@ final class GroupConnection implements VideoCodecObserver, PeerConnectionTrackLi
     #[\Override]
     public function onVideoCodec(string $codec, array $parameters = []): void
     {
-        // The camera connection tells the server it is publishing video; the screencast connection's
-        // publishing state is set by joining the presentation, and only its paused flag toggles here.
-        if ($this->screencast) {
-            $this->call->setPresentationPaused(false);
-        } else {
-            $this->call->setVideoStopped(false);
-        }
+        $this->setVideoStopped(false);
         if ($codec === $this->outgoingVideoCodec && $parameters === $this->outgoingVideoParameters) {
             return;
         }
@@ -394,10 +394,29 @@ final class GroupConnection implements VideoCodecObserver, PeerConnectionTrackLi
     #[\Override]
     public function onVideoStopped(): void
     {
-        if ($this->screencast) {
-            $this->call->setPresentationPaused(true);
-        } else {
-            $this->call->setVideoStopped(true);
+        $this->setVideoStopped(true);
+    }
+
+    /**
+     * Tell the server whether we are publishing video, if that changed: the disk jockey reports the codec
+     * every time a file starts, including every time a looping file restarts.
+     *
+     * The camera connection toggles whether its video is stopped; the screencast connection's publishing
+     * state is set by joining the presentation, and only its paused flag toggles here.
+     */
+    private function setVideoStopped(bool $stopped): void
+    {
+        if ($this->videoStopped === $stopped) {
+            return;
+        }
+        // Set before the request, so that a newer change made meanwhile is not overwritten by this one.
+        $this->videoStopped = $stopped;
+        $taken = $this->screencast
+            ? $this->call->setPresentationPaused($stopped)
+            : $this->call->setVideoStopped($stopped);
+        if (!$taken && $this->videoStopped === $stopped) {
+            // Not joined yet, or the request failed: send it again next time.
+            $this->videoStopped = null;
         }
     }
 

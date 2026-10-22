@@ -22,6 +22,7 @@ namespace danog\MadelineProto\Ipc\Runner;
 
 use Amp\SignalException;
 use danog\MadelineProto\API;
+use danog\MadelineProto\Ipc\AlreadyServedException;
 use danog\MadelineProto\Ipc\IpcState;
 use danog\MadelineProto\Ipc\Server;
 use danog\MadelineProto\Logger;
@@ -57,7 +58,8 @@ use Webmozart\Assert\Assert;
         \define('MADELINE_WORKER_ARGS', $arguments);
     }
 
-    if (\defined('SIGHUP')) {
+    // Not under a web server SAPI: the process belongs to the web server, which handles the signals itself
+    if (\defined('SIGHUP') && PHP_SAPI === 'cli') {
         try {
             pcntl_signal(SIGHUP, static fn () => null);
         } catch (\Throwable $e) {
@@ -130,6 +132,9 @@ use Webmozart\Assert\Assert;
                     $API->report("Surfaced: $e");
                 }
             }
+        } catch (AlreadyServedException $e) {
+            // Started concurrently with the server that won the session lock: nothing to report
+            Logger::log($e->getMessage().', exiting...');
         } catch (\Throwable $e) {
             echo "$e";
             echo 'Got exception in IPC server, exiting...';

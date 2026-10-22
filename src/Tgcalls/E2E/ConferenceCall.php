@@ -34,6 +34,7 @@ use danog\MadelineProto\MTProto;
 use danog\MadelineProto\ParseMode;
 use danog\MadelineProto\RecordingFormat;
 use danog\MadelineProto\RemoteUrl;
+use danog\MadelineProto\RestoresDeclaredProperties;
 use danog\MadelineProto\RPCErrorException;
 use danog\MadelineProto\TextEntities;
 use danog\MadelineProto\Tgcalls\CallControllerInterface;
@@ -64,6 +65,7 @@ use Throwable;
  */
 final class ConferenceCall implements GroupConnectionOwner, E2EKeyProvider, CallControllerInterface
 {
+    use RestoresDeclaredProperties;
     use GroupMediaTrait;
 
     /** Subchain ids: 0 = shared-state chain, 1 = commit-reveal verification broadcasts. */
@@ -165,7 +167,7 @@ final class ConferenceCall implements GroupConnectionOwner, E2EKeyProvider, Call
     public function __serialize(): array
     {
         $vars = get_object_vars($this);
-        unset($vars['pollWatcher']);
+        unset($vars['pollWatcher'], $vars['resumePending']);
         return $vars;
     }
 
@@ -175,25 +177,35 @@ final class ConferenceCall implements GroupConnectionOwner, E2EKeyProvider, Call
     public function __unserialize(array $data): void
     {
         // Synchronous restoration only — no async work here (that goes in resume()).
-        foreach ($data as $key => $value) {
-            $this->{$key} = $value;
-        }
+        $this->restoreDeclaredProperties($data);
         // Sessions serialized before the packet counters were shared carry no state object.
         $this->cryptorState ??= new FrameCryptorState();
         $this->pollWatcher = null;
         $this->diskJockey->start();
         $this->presentationDj?->start();
-        // Bring the rest of the graph back once it is whole, from a single queued task.
-        EventLoop::queue($this->resumeAfterRestart(...));
+        // Bring the rest of the graph back once the MTProto session is reset and connected: resumed by
+        // MTProto::wakeup(), since resuming makes requests and those sent before the reset are lost.
+        $this->resumePending = true;
     }
+
+    /** Whether the conference was restored from a session, and is yet to be resumed by {@see self::resumeAfterRestart()}. */
+    private bool $resumePending = false;
 
     /**
      * Resume the conference after the process restarted: reopen the media connection, re-register for
      * push updates, restart the backstop poll and catch up on any blocks missed while stopped. Named
      * to avoid clashing with the {@see Call} playback {@see self::resume()}.
+     *
+     * Called by {@see MTProto::wakeup()} once the MTProto session is reset and connected.
+     *
+     * @internal
      */
     public function resumeAfterRestart(): void
     {
+        if (!$this->resumePending) {
+            return;
+        }
+        $this->resumePending = false;
         if (!$this->joined || $this->inputCall === null) {
             return;
         }
@@ -262,6 +274,12 @@ final class ConferenceCall implements GroupConnectionOwner, E2EKeyProvider, Call
     public function isJoined(): bool
     {
         return $this->joined;
+    }
+
+    #[\Override]
+    public function getVoIPSettings(): \danog\MadelineProto\Settings\VoIP
+    {
+        return $this->API->getSettings()->getVoip();
     }
 
     /**

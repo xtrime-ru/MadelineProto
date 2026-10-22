@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
+use danog\MadelineProto\Exception;
 use danog\MadelineProto\Stream\BufferedProxyStreamInterface;
 use danog\MadelineProto\Stream\Common\CtrStream;
 use danog\MadelineProto\Stream\ConnectionContext;
@@ -36,6 +37,10 @@ use danog\MadelineProto\Tools;
  */
 final class ObfuscatedStream extends CtrStream implements BufferedProxyStreamInterface
 {
+    /**
+     * Maximum length of the domain of a fake TLS secret, as in TDLib, to fit in a ClientHello.
+     */
+    public const MAX_DOMAIN_LENGTH = 182;
     private $stream;
     private $extra;
     /**
@@ -69,7 +74,7 @@ final class ObfuscatedStream extends CtrStream implements BufferedProxyStreamInt
         $ivRev = substr($reversed, 40, 16);
         parent::setExtra(['encrypt' => ['key' => $key, 'iv' => $iv], 'decrypt' => ['key' => $keyRev, 'iv' => $ivRev]]);
         parent::connect($ctx);
-        $random = substr_replace($random, substr(@$this->getEncryptor()->encrypt($random), 56, 8), 56, 8);
+        $random = substr_replace($random, substr($this->getEncryptor()->encrypt($random), 56, 8), 56, 8);
         $this->getStream()->write($random);
     }
     /**
@@ -81,14 +86,45 @@ final class ObfuscatedStream extends CtrStream implements BufferedProxyStreamInt
     public function setExtra($extra): void
     {
         if (isset($extra['secret'])) {
-            if (\strlen($extra['secret']) > 17) {
-                $extra['secret'] = hex2bin($extra['secret']);
-            }
-            if (\strlen($extra['secret']) == 17) {
-                $extra['secret'] = substr($extra['secret'], 1, 16);
-            }
+            $extra['secret'] = self::decodeSecret($extra['secret'])['key'];
         }
         $this->extra = $extra;
+    }
+
+    /**
+     * Decode an MTProxy secret: raw, or hex or (URL-safe, as in proxy links) base64 encoded.
+     *
+     * Returns its 16-byte key, whether the transport must be padded (dd and ee secrets), and the
+     * domain that fake TLS secrets (ee) append to the key.
+     *
+     * @return array{key: string, padded: bool, domain: ?string}
+     *
+     * @psalm-pure
+     */
+    public static function decodeSecret(string $secret): array
+    {
+        if (\strlen($secret) !== 16) {
+            $decoded = preg_match('/^(?:[a-f0-9]{2})+$/i', $secret)
+                ? hex2bin($secret)
+                : base64_decode(strtr($secret, '-_', '+/'), true);
+            if ($decoded === false) {
+                throw new Exception('The MTProxy secret is neither hex nor base64');
+            }
+            $secret = $decoded;
+        }
+        if (\strlen($secret) === 16) {
+            return ['key' => $secret, 'padded' => false, 'domain' => null];
+        }
+        if (\strlen($secret) === 17 && $secret[0] === "\xdd") {
+            return ['key' => substr($secret, 1), 'padded' => true, 'domain' => null];
+        }
+        if (\strlen($secret) >= 18 && $secret[0] === "\xee") {
+            if (\strlen($secret) > 17 + self::MAX_DOMAIN_LENGTH) {
+                throw new Exception('The domain of the fake TLS MTProxy secret is too long');
+            }
+            return ['key' => substr($secret, 1, 16), 'padded' => true, 'domain' => substr($secret, 17)];
+        }
+        throw new Exception('Invalid MTProxy secret: it must be 16 bytes long, 17 starting with dd, or start with ee followed by the key and a domain');
     }
     /**
      * @psalm-pure

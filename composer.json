@@ -48,7 +48,7 @@
         "amphp/http-client-cookies": "^2",
         "danog/tg-file-decoder": "^1.0.2",
         "league/uri": "^7.8.1",
-        "danog/ipc": "^1.0.1",
+        "danog/ipc": "^1.1.0",
         "amphp/log": "^2",
         "danog/loop": "^1.1.1",
         "phpseclib/phpseclib": "^4.0.1",
@@ -59,21 +59,21 @@
         "bacon/bacon-qr-code": "^3.1.1",
         "nikic/php-parser": "^5.9.0",
         "revolt/event-loop": "^1.0.9",
-        "danog/async-orm": "^1.1.4",
-        "danog/telegram-entities": "^1.0.6",
+        "danog/async-orm": "^1.1.6",
+        "danog/telegram-entities": "^1.1.0",
         "danog/better-prometheus": "^0.1.1",
         "amphp/http-server": "^3.4.6",
         "danog/tg-dialog-id": "^2",
         "symfony/polyfill-php83": "^1.41",
         "danog/php-rtc-av": "^1.1.11",
-        "danog/php-rtc-codecs": "^1.1.18",
-        "danog/php-rtc-dtls": "^2.0.15",
-        "danog/php-rtc-ice": "^2.0.17",
-        "danog/php-rtc-ntp": "^1.1.12",
-        "danog/php-rtc-rtcp": "^1.1.10",
-        "danog/php-rtc-rtp": "^2.0.21",
+        "danog/php-rtc-codecs": "^1.1.19",
+        "danog/php-rtc-dtls": "^2.0.19",
+        "danog/php-rtc-ice": "^2.0.18",
+        "danog/php-rtc-ntp": "^1.1.14",
+        "danog/php-rtc-rtcp": "^1.1.11",
+        "danog/php-rtc-rtp": "^2.0.23",
         "danog/php-rtc-sctp": "^2.0.14",
-        "danog/php-rtc-srtp": "^1.1.14",
+        "danog/php-rtc-srtp": "^1.1.16",
         "danog/php-rtc-stun": "^2.0.18",
         "danog/php-rtc-webrtc": "^2.0.19",
         "danog/php-rtc-datachannel": "^1.1.10",
@@ -94,7 +94,7 @@
         "danog/phpdoc": "^0.1.24",
         "phpunit/phpunit": "^9.6.36",
         "amphp/phpunit-util": "^3",
-        "bamarni/composer-bin-plugin": "1.8.2",
+        "bamarni/composer-bin-plugin": "1.9.1",
         "symfony/yaml": "^6.4.45",
         "dg/bypass-finals": "dev-master",
         "brianium/paratest": "^6.11.1",
@@ -103,12 +103,14 @@
     },
     "suggest": {
         "ext-primemodule": "Install the primemodule and FFI extensions to speed up MadelineProto (https://prime.madelineproto.xyz)",
-        "ext-ffi": "Install the FFI extension (with libopus, libvpx and ffmpeg) to transcode audio and video in realtime; not required to play back pre-converted files",
+        "ext-ffi": "Install the FFI extension (with libopus, libvpx and ffmpeg) to transcode audio and video in realtime; not required to play and record video and audio inside calls",
         "ext-pdo": "Install the pdo extension to store session data on MySQL",
         "ext-openssl": "Install the openssl extension for faster crypto",
+        "ext-sodium": "Install the sodium extension for faster crypto",
         "ext-uv": "Install the uv extension to greatly speed up MadelineProto!",
         "ext-gmp": "Install the gmp extension to speed up authorization",
-        "ext-bcmath": "Install the bcmath extension to speed up authorization"
+        "ext-bcmath": "Install the bcmath extension to speed up authorization",
+        "ext-sockets": "Install the sockets extension on Windows to use UNIX sockets for IPC (otherwise TCP on 127.0.0.1 is used, which any local user can connect to)"
     },
     "authors": [
         {
@@ -145,7 +147,8 @@
             "@test-light"
         ],
         "test": [
-            "@paratest"
+            "@paratest",
+            "@test-session"
         ],
         "test-light": [
             "@paratest-light"
@@ -156,8 +159,9 @@
         "fuzz": "php tools/fuzzer.php",
         "file_ref_map": "php tools/gen_filerefmap.php",
         "docs-fix": "tools/fix_docs.sh",
-        "paratest": "@php -dzend.assertions=1 ./vendor/bin/paratest -fv",
-        "paratest-light": "@php -dzend.assertions=1 ./vendor/bin/paratest -fvc phpunit-light.xml",
+        "paratest": "@php -dzend.assertions=1 ./vendor/bin/paratest -v --exclude-group session",
+        "test-session": "tests/session_tests.sh",
+        "paratest-light": "@php -dzend.assertions=1 ./vendor/bin/paratest -vc phpunit-light.xml --exclude-group session",
         "bin": "echo 'bin not installed'",
         "post-install-cmd": [
             "@composer bin all install --ansi"

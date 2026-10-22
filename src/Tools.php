@@ -54,7 +54,6 @@ use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\NodeVisitor\ParentConnectingVisitor;
 use PhpParser\ParserFactory;
-use phpseclib4\Crypt\Random;
 use ReflectionClass;
 use Traversable;
 
@@ -107,11 +106,11 @@ abstract class Tools extends AsyncTools
     {
         try {
             if (file_exists('/proc/self/maps')) {
-                return substr_count(@file_get_contents('/proc/self/maps'), "\n")-1;
+                return substr_count(file_get_contents('/proc/self/maps'), "\n")-1;
             }
             $pid = getmypid();
             if (file_exists("/proc/$pid/maps")) {
-                return substr_count(@file_get_contents("/proc/$pid/maps"), "\n")-1;
+                return substr_count(file_get_contents("/proc/$pid/maps"), "\n")-1;
             }
         } catch (\Throwable) {
         }
@@ -125,7 +124,7 @@ abstract class Tools extends AsyncTools
     {
         try {
             if (file_exists('/proc/sys/vm/max_map_count')) {
-                return ((int) @file_get_contents('/proc/sys/vm/max_map_count')) ?: null;
+                return ((int) file_get_contents('/proc/sys/vm/max_map_count')) ?: null;
             }
         } catch (\Throwable) {
         }
@@ -161,7 +160,7 @@ abstract class Tools extends AsyncTools
      */
     private static function uRShift(int $a, int $b): int
     {
-        if($b == 0) {
+        if ($b == 0) {
             return $a;
         }
         return ($a >> $b) & ~(1<<(8*PHP_INT_SIZE-1)>>($b-1));
@@ -282,10 +281,10 @@ abstract class Tools extends AsyncTools
     public static function packSignedInt(int $value): string
     {
         if ($value > 2147483647) {
-            throw new TL\Exception(sprintf(Lang::$current_lang['value_bigger_than_2147483647'], $value));
+            throw new TL\Exception(\sprintf(Lang::$current_lang['value_bigger_than_2147483647'], $value));
         }
         if ($value < -2147483648) {
-            throw new TL\Exception(sprintf(Lang::$current_lang['value_smaller_than_2147483648'], $value));
+            throw new TL\Exception(\sprintf(Lang::$current_lang['value_smaller_than_2147483648'], $value));
         }
         $res = pack('l', $value);
         return Magic::$BIG_ENDIAN ? strrev($res) : $res;
@@ -311,10 +310,10 @@ abstract class Tools extends AsyncTools
     public static function packUnsignedInt(int $value): string
     {
         if ($value > 4294967295) {
-            throw new TL\Exception(sprintf(Lang::$current_lang['value_bigger_than_4294967296'], $value));
+            throw new TL\Exception(\sprintf(Lang::$current_lang['value_bigger_than_4294967296'], $value));
         }
         if ($value < 0) {
-            throw new TL\Exception(sprintf(Lang::$current_lang['value_smaller_than_0'], $value));
+            throw new TL\Exception(\sprintf(Lang::$current_lang['value_smaller_than_0'], $value));
         }
         return pack('V', $value);
     }
@@ -501,14 +500,23 @@ abstract class Tools extends AsyncTools
      */
     public static function closeConnection(string $message): void
     {
-        if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg' || isset($GLOBALS['exited']) || headers_sent() || isset($_GET['MadelineSelfRestart']) || Magic::$isIpcWorker) {
+        if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg' || isset($GLOBALS['exited']) || isset($_GET['MadelineSelfRestart']) || Magic::$isIpcWorker) {
             return;
         }
-        $buffer = @ob_get_clean() ?: '';
+        try {
+            $buffer = ob_get_clean() ?: '';
+        } catch (\Throwable) {
+            // No output buffer
+            $buffer = '';
+        }
         $buffer .= $message;
         ignore_user_abort(true);
-        header('Connection: close');
-        header('Content-Type: text/html');
+        // Output may already have been sent (an echo in onStart, a displayed warning): the request must end anyway,
+        // or the client that started a web bot waits on it for as long as the bot runs.
+        if (!headers_sent()) {
+            header('Connection: close');
+            header('Content-Type: text/html');
+        }
         echo $buffer;
         flush();
         $GLOBALS['exited'] = true;
@@ -692,53 +700,70 @@ abstract class Tools extends AsyncTools
     {
         $buffer = '';
         if ($stream instanceof LocalFile) {
-            $stream = openFile($stream->file, 'r');
+            $file = openFile($stream->file, 'r');
             if ($offset !== 0) {
-                $stream->seek($offset);
+                $file->seek($offset);
             }
-            return static fn (int $len): ?string => $stream->read(cancellation: $cancellation, length: $len);
-        }
-        if ($stream instanceof RemoteUrl) {
-            self::$client ??= HttpClientBuilder::buildDefault();
-            $request = new Request($stream->url);
-            $request->setTransferTimeout(INF);
-            $request->setInactivityTimeout(INF);
-            if ($offset !== 0) {
-                $request->setHeader('Range', "bytes={$offset}-");
-            }
-            $stream = self::$client->request(
-                $request,
-                $cancellation
-            )->getBody();
-        } elseif ($offset !== 0) {
-            if ($stream instanceof ResumableDownloadStream) {
-                $stream->skip($offset);
-            } elseif ($stream instanceof ResumableStream) {
-                $buffer = self::skipStream($stream, $offset, $cancellation);
-            } else {
-                throw new Exception('Cannot resume a raw stream from a byte offset: it is not seekable.');
-            }
-        }
-        return static function (int $len) use (&$buffer, $stream, $cancellation): ?string {
-            if ($buffer === null) {
-                return null;
-            }
-            do {
-                if (\strlen($buffer) >= $len) {
-                    $piece = substr($buffer, 0, $len);
-                    $buffer = substr($buffer, $len);
-                    return $piece;
+            $read = static fn (): ?string => $file->read(cancellation: $cancellation, length: self::READ_AHEAD_LENGTH);
+        } else {
+            if ($stream instanceof RemoteUrl) {
+                self::$client ??= HttpClientBuilder::buildDefault();
+                $request = new Request($stream->url);
+                $request->setTransferTimeout(INF);
+                $request->setInactivityTimeout(INF);
+                if ($offset !== 0) {
+                    $request->setHeader('Range', "bytes={$offset}-");
                 }
+                $stream = self::$client->request(
+                    $request,
+                    $cancellation
+                )->getBody();
+            } elseif ($offset !== 0) {
+                if ($stream instanceof ResumableDownloadStream) {
+                    $stream->skip($offset);
+                } elseif ($stream instanceof ResumableStream) {
+                    $buffer = self::skipStream($stream, $offset, $cancellation) ?? '';
+                } else {
+                    throw new Exception('Cannot resume a raw stream from a byte offset: it is not seekable.');
+                }
+            }
+            $read = static function () use ($stream, $cancellation): ?string {
                 $chunk = $stream->read($cancellation);
                 if ($chunk === null) {
-                    $buffer = null;
                     $stream->close();
-                    return null;
+                }
+                return $chunk;
+            };
+        }
+        // Demuxers read a few bytes at a time: read ahead, and hand out the buffer from a position
+        // instead of cutting it (which would copy it) on every read.
+        $position = 0;
+        $eof = false;
+        return static function (int $len) use (&$buffer, &$position, &$eof, $read): ?string {
+            while (!$eof && \strlen($buffer) - $position < $len) {
+                $chunk = $read();
+                if ($chunk === null) {
+                    $eof = true;
+                    break;
+                }
+                if ($position > self::READ_AHEAD_LENGTH) {
+                    $buffer = substr($buffer, $position);
+                    $position = 0;
                 }
                 $buffer .= $chunk;
-            } while (true);
+            }
+            if ($position >= \strlen($buffer)) {
+                return null;
+            }
+            // Fewer bytes than requested only at the end of the stream.
+            $piece = substr($buffer, $position, $len);
+            $position += \strlen($piece);
+            return $piece;
         };
     }
+
+    /** How much is read ahead by {@see self::openBuffered()}, in bytes. */
+    private const READ_AHEAD_LENGTH = 128 * 1024;
 
     /**
      * Read and discard the next bytes of a stream.
@@ -864,7 +889,7 @@ abstract class Tools extends AsyncTools
                 }
                 $explanation = self::BLOCKING_FUNCTIONS[$name];
                 $issues []= new EventHandlerIssue(
-                    message: sprintf(Lang::$current_lang['do_not_use_blocking_function'], $name, $explanation),
+                    message: \sprintf(Lang::$current_lang['do_not_use_blocking_function'], $name, $explanation),
                     file: $file,
                     line: $call->getStartLine(),
                     severe: true
@@ -875,7 +900,7 @@ abstract class Tools extends AsyncTools
             if (isset(self::DEPRECATED_FUNCTIONS[$name])) {
                 $explanation = self::DEPRECATED_FUNCTIONS[$name];
                 $issues []= new EventHandlerIssue(
-                    message: sprintf(Lang::$current_lang['do_not_use_deprecated_function'], $name, $explanation),
+                    message: \sprintf(Lang::$current_lang['do_not_use_deprecated_function'], $name, $explanation),
                     file: $file,
                     line: $call->getStartLine(),
                     severe: true
@@ -909,7 +934,7 @@ abstract class Tools extends AsyncTools
 
             if (\in_array($name, self::BANNED_FILE_FUNCTIONS, true)) {
                 $issues []= new EventHandlerIssue(
-                    message: sprintf(Lang::$current_lang['recommend_not_use_filesystem_function'], $name),
+                    message: \sprintf(Lang::$current_lang['recommend_not_use_filesystem_function'], $name),
                     file: $file,
                     line: $call->getStartLine(),
                     severe: false
@@ -926,7 +951,7 @@ abstract class Tools extends AsyncTools
             if (isset(self::BLOCKING_CLASSES[$name])) {
                 $explanation = self::BLOCKING_CLASSES[$name];
                 $issues []= new EventHandlerIssue(
-                    message: sprintf(Lang::$current_lang['do_not_use_blocking_class'], $name, $explanation),
+                    message: \sprintf(Lang::$current_lang['do_not_use_blocking_class'], $name, $explanation),
                     file: $file,
                     line: $new->getStartLine(),
                     severe: true

@@ -28,12 +28,15 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
 use AssertionError;
+use danog\MadelineProto\GroupCall\Rtmp\FlvTags;
 use danog\MadelineProto\LocalFile;
 use danog\MadelineProto\Logger;
 use danog\MadelineProto\Loop\VoIPLoop;
 use danog\MadelineProto\Matroska;
+use danog\MadelineProto\Mp4;
 use danog\MadelineProto\Ogg;
 use danog\MadelineProto\RemoteUrl;
+use danog\MadelineProto\RestoresDeclaredProperties;
 use danog\MadelineProto\ResumableStream;
 use danog\MadelineProto\Tgcalls\CallControllerInterface;
 use danog\MadelineProto\Tgcalls\H264Framing;
@@ -54,15 +57,18 @@ use Webrtc\Codecs\Codec;
  * - A WebM/Matroska file (it begins with the EBML header) is demuxed by {@see Matroska}: its already
  *   encoded video and OPUS audio frames are handed to the RTP senders untouched, keeping the
  *   timestamps they had in the file, which is what keeps the two in sync.
- * - A native MadelineProto OGG OPUS file is demuxed by {@see Ogg} and played as-is; anything else is
- *   converted to OGG OPUS on the fly by ffmpeg.
+ * - An OGG OPUS file is demuxed by {@see Ogg}: its packets are handed to the tracks untouched, each
+ *   paced by its own duration. Anything else is converted to OGG OPUS on the fly by ffmpeg.
+ *   The legacy libtgvoip engine can only send 60ms packets, so for it ({@see self::setFixedOggGrid()})
+ *   only MadelineProto's own OGG OPUS files are played as-is, and the others are converted too.
  *
  * Nothing is decoded or re-encoded for pre-encoded input, so playback needs no codec library (and
- * therefore no FFI). Frames are **streamed**, not buffered whole: the reader keeps only about
- * {@see self::BUFFER_AHEAD_MS} of look-ahead and blocks until the tracks drain it, so memory stays
- * bounded however long the file is. The reader position is a byte offset into the current file, so
- * playback resumes exactly where it left off across a serialize → destruct → unserialize cycle (for
- * a seekable source — a raw stream or an on-the-fly conversion replays the current item instead).
+ * therefore no FFI). Frames are **streamed**, not buffered whole: the reader reads only as far ahead
+ * of playback as configured ({@see \danog\MadelineProto\Settings\VoIP::setPlaybackLookahead()}, just
+ * the next frame by default) and blocks until the tracks drain it, so memory stays bounded however
+ * long the file is. The frames read ahead are not saved: playback resumes exactly from the first one
+ * that was not played across a serialize → destruct → unserialize cycle (for a seekable source — a
+ * raw stream or an on-the-fly conversion replays the current item instead).
  *
  * The whole playlist API — {@see self::play()}, {@see self::skip()}, {@see self::playOnHold()},
  * pausing, {@see self::getCurrent()} — applies to every file regardless of what media it carries.
@@ -71,10 +77,17 @@ use Webrtc\Codecs\Codec;
  */
 final class DjLoop extends VoIPLoop
 {
+    use RestoresDeclaredProperties;
     /** VP8 and every other video codec on the wire use a 90kHz RTP clock. */
     public const VIDEO_CLOCK_RATE = 90000;
     /** OPUS always uses a 48kHz RTP clock. */
     public const AUDIO_CLOCK_RATE = 48000;
+    /**
+     * How far ahead of the look-ahead the reader may go to find the next frame of a track that has
+     * none queued, see {@see self::throttle()}: muxers interleave the frames of the tracks of a file by
+     * timestamp, so that's enough for any file but badly interleaved ones.
+     */
+    private const MAX_INTERLEAVING_MS = 1000;
 
     /**
      * The video codecs we can transmit, as `Matroska CodecID => SDP encoding name`.
@@ -93,6 +106,22 @@ final class DjLoop extends VoIPLoop
     /** The audio codecs we can transmit, as `Matroska CodecID => SDP encoding name`. */
     public const AUDIO_CODECS = ['A_OPUS' => 'opus'];
 
+    /** The video codecs of an RTMP livestream: the RTMP ingest of Telegram only accepts H.264. */
+    public const RTMP_VIDEO_CODECS = ['V_MPEG4/ISO/AVC' => 'H264'];
+    /** The audio codecs of an RTMP livestream: the RTMP ingest of Telegram only accepts AAC (any Matroska CodecID of it). */
+    public const RTMP_AUDIO_CODECS = [
+        'A_AAC' => 'aac',
+        'A_AAC/MPEG2/MAIN' => 'aac',
+        'A_AAC/MPEG2/LC' => 'aac',
+        'A_AAC/MPEG2/LC/SBR' => 'aac',
+        'A_AAC/MPEG2/SSR' => 'aac',
+        'A_AAC/MPEG4/MAIN' => 'aac',
+        'A_AAC/MPEG4/LC' => 'aac',
+        'A_AAC/MPEG4/LC/SBR' => 'aac',
+        'A_AAC/MPEG4/SSR' => 'aac',
+        'A_AAC/MPEG4/LTP' => 'aac',
+    ];
+
     /**
      * How a Matroska/WebM file begins: the EBML header, or — for a headerless file, as some muxers
      * and {@see Matroska} itself tolerate — the Segment element straight away.
@@ -100,12 +129,6 @@ final class DjLoop extends VoIPLoop
     private const MATROSKA_MAGICS = ["\x1A\x45\xDF\xA3", "\x18\x53\x80\x67"];
     /** OGG capture pattern: how an OGG file begins. */
     private const OGG_MAGIC = 'OggS';
-
-    /** How far ahead of playback the reader is allowed to buffer, in milliseconds. */
-    private const BUFFER_AHEAD_MS = 2000;
-
-    /** Duration of one MadelineProto OGG OPUS frame, in milliseconds. */
-    private const OGG_FRAME_MS = 60;
 
     /* -------------------------------------------------------------------- *
      *  Playlist.
@@ -120,26 +143,38 @@ final class DjLoop extends VoIPLoop
     private bool $pause = false;
 
     /* -------------------------------------------------------------------- *
-     *  Bounded look-ahead queues (serializable), drained by the tracks.
+     *  Bounded look-ahead queues, drained by the tracks.
+     *
+     *  They are not serialized: the current file is resumed from the position of its first frame
+     *  that was not played yet, instead. Every queued frame carries its `position` in the file
+     *  (see {@see self::trackResume()}), null if the file can't be resumed.
      * -------------------------------------------------------------------- */
 
-    /** @var SplQueue<string> OPUS packets of an OGG file, played on the fixed 60ms grid. */
+    /** @var SplQueue<array{data: string, position: ?list{int, int}, file: int}> OPUS packets of an OGG file. */
     private SplQueue $oggQueue;
+    /** Total duration of the packets in {@see self::$oggQueue}, in 48kHz samples. */
+    private int $oggQueueSamples = 0;
+    /** Whether OGG files must be MadelineProto's own 60ms ones, others being converted (for the legacy libtgvoip engine). */
+    private bool $fixedOggGrid = false;
     /**
-     * @var SplQueue<array{data: string, timestamp: int, file: int}> OPUS frames of a WebM file (48kHz ts).
+     * @var SplQueue<array{data: string, timestamp: int, position: ?list{int, int}, file: int}> OPUS frames of a WebM file (48kHz ts).
      *
      * The `file` of a queued frame is the {@see self::$generation} of the file it was read from: the
      * tracks hold a frame until its presentation time, so the next file may already be queued when
      * they get to it, and they must re-anchor their clocks right where it begins.
      */
     private SplQueue $webmAudioQueue;
-    /** @var SplQueue<array{data: string, timestamp: int, keyframe: bool, file: int}> Video frames (90kHz ts). */
+    /** @var SplQueue<array{data: string, timestamp: int, keyframe: bool, position: ?list{int, int}, file: int}> Video frames (90kHz ts). */
     private SplQueue $videoQueue;
 
     /** Completed by a track when it drains a queue, to release the reader from back-pressure. */
     private ?DeferredFuture $drainDeferred = null;
-    /** Awaited by the blocking {@see self::pullPacket()} until an OGG packet is available. */
+    /** Awaited by {@see self::pullPacket()} and {@see self::awaitFrame()} until a frame is queued. */
     private ?DeferredFuture $packetDeferred = null;
+    /** Whether the current WebM file has audio for the audio track, see {@see self::isStarving()}. */
+    private bool $currentHasAudio = false;
+    /** Whether the current WebM file has video for the video track, see {@see self::isStarving()}. */
+    private bool $currentHasVideo = false;
 
     /* -------------------------------------------------------------------- *
      *  Current file + its byte-offset resume state.
@@ -147,7 +182,7 @@ final class DjLoop extends VoIPLoop
 
     private LocalFile|RemoteUrl|ReadableStream|StreamSnapshot|null $currentFile = null;
     private LocalFile|RemoteUrl|string|null $currentDesc = null;
-    /** 'ogg' or 'matroska', or null when nothing is playing. */
+    /** 'ogg', 'matroska' or 'mp4', or null when nothing is playing. */
     private ?string $currentKind = null;
     /** Whether the current file can be resumed from a byte offset (a seekable, non-converted source). */
     private bool $currentResumable = false;
@@ -158,6 +193,30 @@ final class DjLoop extends VoIPLoop
     private int $resumeSkip = 0;
     /** Byte offset of the unit the last produced frame came from, used to keep {@see self::$resumeSkip}. */
     private int $resumeUnitOffset = -1;
+    /**
+     * Position of the last played audio and video frame of the files whose frames are queued, by
+     * {@see self::$generation}, see {@see self::trackResume()}.
+     *
+     * The audio and video frames of a WebM file are interleaved, but played separately: when resuming
+     * from the first frame that was not played, the frames of the other kind that were already played
+     * are skipped, see {@see self::$resumePlayed}.
+     *
+     * @var array<int, array{audio?: list{int, int}, video?: list{int, int}}>
+     */
+    private array $playedPositions = [];
+    /**
+     * Position of the last played audio and video frame of the file being resumed.
+     *
+     * @var array{audio?: list{int, int}, video?: list{int, int}}
+     */
+    private array $resumePlayed = [];
+    /**
+     * The files read before the current one, oldest first, while some of their frames may still be
+     * queued, to resume them from the first one that was not played: see {@see self::fileState()}.
+     *
+     * @var list<array<string, mixed>>
+     */
+    private array $previous = [];
     /** The Matroska track list, needed to resume a WebM file past its (once-only) header. */
     private array $resumeTracks = [];
     /** The Matroska timestamp scale, needed to resume a WebM file. */
@@ -181,6 +240,10 @@ final class DjLoop extends VoIPLoop
     /** Whether {@see self::$videoParameters} is still a tentative value awaiting the first keyframe. */
     private bool $videoProfileFromFrame = false;
     private ?H264Framing $framing = null;
+    /** The track number of the AAC audio of the current file, in RTMP mode. */
+    private ?int $aacTrack = null;
+    /** The AudioSpecificConfig of {@see self::$aacTrack}, for the ADTS headers of its frames. */
+    private ?string $aacConfig = null;
     /** Whether a video codec was announced and still owes the observer a stop notification. */
     private bool $webmVideoAnnounced = false;
 
@@ -196,8 +259,11 @@ final class DjLoop extends VoIPLoop
     /**
      * @param bool $videoOnly When true, the audio of played files is dropped and only their video is
      *                        queued — used for a presentation/screencast stream, which carries no audio.
+     * @param bool $rtmp      When true, the files are played for an RTMP livestream (see
+     *                        {@see \danog\MadelineProto\GroupCall\Rtmp\RtmpPublisher}): only H.264 and AAC,
+     *                        whose frames are queued with an ADTS header, in MP4 or Matroska files.
      */
-    public function __construct(CallControllerInterface $instance, private bool $videoOnly = false)
+    public function __construct(CallControllerInterface $instance, private bool $videoOnly = false, private bool $rtmp = false)
     {
         parent::__construct($instance);
         $this->oggQueue = new SplQueue;
@@ -231,47 +297,103 @@ final class DjLoop extends VoIPLoop
         }
     }
 
+    /**
+     * The state needed to resume the current file.
+     *
+     * @return array<string, mixed>
+     */
+    private function fileState(): array
+    {
+        return [
+            'generation' => $this->generation,
+            'file' => $this->currentFile,
+            'desc' => $this->currentDesc,
+            'kind' => $this->currentKind,
+            'hold' => $this->playingHold,
+            'resumeOffset' => $this->resumeOffset,
+            'resumeSkip' => $this->resumeSkip,
+            'resumeUnitOffset' => $this->resumeUnitOffset,
+            'resumeTracks' => $this->resumeTracks,
+            'resumeTimestampScale' => $this->resumeTimestampScale,
+            'videoCodec' => $this->videoCodec,
+            'videoParameters' => $this->videoParameters,
+            'videoProfileFromFrame' => $this->videoProfileFromFrame,
+            'framing' => $this->framing,
+            'aacTrack' => $this->aacTrack,
+            'aacConfig' => $this->aacConfig,
+        ];
+    }
+
     public function __serialize(): array
     {
-        // Only a seekable, non-converted file can resume mid-stream; a raw stream or an on-the-fly
-        // conversion replays its item from the start (files) or is dropped (streams).
+        // The queued frames are not saved: a seekable, non-converted file is resumed from the first of its
+        // frames that was not played. A raw stream or an on-the-fly conversion replays its item from the
+        // start (files) or is dropped (streams).
         $inputFiles = $this->inputFiles;
-        $currentFile = null;
-        if ($this->currentFile !== null && !$this->finishedCurrent) {
+        $holdIndex = $this->holdIndex;
+        $state = null;
+        $position = null;
+        foreach ($this->previous as $k => $previous) {
+            if (($position = $this->firstUnplayedPosition($previous['generation'])) !== null) {
+                // The end of a previous file was not played yet: resume it, followed by the files after
+                // it, whose frames come after its own.
+                $state = $previous;
+                $next = array_column(\array_slice($this->previous, $k + 1), 'file');
+                if ($this->currentFile !== null) {
+                    if ($this->playingHold) {
+                        $holdIndex--;
+                    } else {
+                        $next[] = $this->currentFile;
+                    }
+                }
+                array_unshift($inputFiles, ...$next);
+                break;
+            }
+        }
+        if ($state === null && $this->currentFile !== null && !$this->finishedCurrent) {
             if ($this->currentResumable) {
-                $currentFile = $this->currentFile;
+                $state = $this->fileState();
+                $position = $this->firstUnplayedPosition($this->generation);
             } elseif (!$this->currentFile instanceof ReadableStream) {
                 array_unshift($inputFiles, $this->currentFile);
             }
+        }
+        // Without a position, every frame read so far was played: resume right after the last one.
+        if ($state !== null && $position !== null) {
+            [$state['resumeOffset'], $state['resumeSkip']] = $position;
+            $state['resumeUnitOffset'] = $position[0];
         }
         return [
             'instance' => $this->instance,
             'pause' => $this->pause,
             'inputFiles' => array_values(array_filter($inputFiles, static fn ($v) => !$v instanceof ReadableStream)),
             'holdFiles' => array_values(array_filter($this->holdFiles, static fn ($v) => !$v instanceof ReadableStream)),
-            'holdIndex' => $this->holdIndex,
-            'playingHold' => $this->playingHold,
-            'oggQueue' => $this->oggQueue,
-            'webmAudioQueue' => $this->webmAudioQueue,
-            'videoQueue' => $this->videoQueue,
-            'currentFile' => $currentFile,
-            'currentDesc' => $currentFile !== null ? $this->currentDesc : null,
-            'currentKind' => $currentFile !== null ? $this->currentKind : null,
-            'currentResumable' => $currentFile !== null,
-            'finishedCurrent' => $currentFile === null,
-            'resumeOffset' => $this->resumeOffset,
-            'resumeSkip' => $this->resumeSkip,
-            'resumeUnitOffset' => $this->resumeUnitOffset,
-            'resumeTracks' => $this->resumeTracks,
-            'resumeTimestampScale' => $this->resumeTimestampScale,
-            'bufferedUntilMs' => $this->bufferedUntilMs,
-            'playbackMs' => $this->playbackMs,
+            'holdIndex' => $holdIndex,
+            'playingHold' => $state['hold'] ?? false,
+            'fixedOggGrid' => $this->fixedOggGrid,
+            'currentFile' => $state['file'] ?? null,
+            'currentDesc' => $state['desc'] ?? null,
+            'currentKind' => $state['kind'] ?? null,
+            'currentResumable' => $state !== null,
+            'finishedCurrent' => $state === null,
+            'resumeOffset' => $state['resumeOffset'] ?? 0,
+            'resumeSkip' => $state['resumeSkip'] ?? 0,
+            'resumeUnitOffset' => $state['resumeUnitOffset'] ?? -1,
+            'resumePlayed' => $state !== null ? $this->playedPositions[$state['generation']] ?? [] : [],
+            'resumeTracks' => $state['resumeTracks'] ?? [],
+            'resumeTimestampScale' => $state['resumeTimestampScale'] ?? 0,
+            // Nothing is buffered once resumed: playback restarts from the first frame read again.
+            'bufferedUntilMs' => 0,
+            'playbackMs' => 0,
             'videoObserver' => $this->videoObserver,
-            'videoCodec' => $this->videoCodec,
-            'videoParameters' => $this->videoParameters,
-            'videoProfileFromFrame' => $this->videoProfileFromFrame,
+            'videoCodec' => $state !== null ? $state['videoCodec'] : $this->videoCodec,
+            'videoParameters' => $state !== null ? $state['videoParameters'] : $this->videoParameters,
+            'videoProfileFromFrame' => $state !== null ? $state['videoProfileFromFrame'] : $this->videoProfileFromFrame,
             'videoOnly' => $this->videoOnly,
-            'framing' => $this->framing,
+            'framing' => $state !== null ? $state['framing'] : $this->framing,
+            'aacTrack' => $state !== null ? $state['aacTrack'] : $this->aacTrack,
+            'aacConfig' => $state !== null ? $state['aacConfig'] : $this->aacConfig,
+            'rtmp' => $this->rtmp,
             'webmVideoAnnounced' => $this->webmVideoAnnounced,
             // Kept (not reset) so a file opened after a restart never reuses the ID of one whose
             // frames the tracks still remember: see the `file` of the queued frames.
@@ -281,12 +403,15 @@ final class DjLoop extends VoIPLoop
 
     public function __unserialize(array $data): void
     {
-        foreach ($data as $key => $value) {
-            $this->{$key} = $value;
-        }
-        $this->oggQueue ??= new SplQueue;
-        $this->webmAudioQueue ??= new SplQueue;
-        $this->videoQueue ??= new SplQueue;
+        $this->restoreDeclaredProperties($data);
+        // Older versions saved the queued frames: they are dropped (along with at most a couple of seconds of playback).
+        $this->oggQueue = new SplQueue;
+        $this->oggQueueSamples = 0;
+        $this->webmAudioQueue = new SplQueue;
+        $this->videoQueue = new SplQueue;
+        // Not saved by older versions.
+        $this->videoOnly ??= false;
+        $this->rtmp ??= false;
         // Do NOT restart the reader here: its loop reads the call's state, which is only restored once
         // the whole call graph has finished deserializing. Starting it now could run it
         // mid-deserialization (if a nested resume suspends the fiber) and dereference not-yet-restored
@@ -310,8 +435,10 @@ final class DjLoop extends VoIPLoop
         $this->generation++;
         $this->readerCancel?->cancel();
         $this->oggQueue = new SplQueue;
+        $this->oggQueueSamples = 0;
         $this->webmAudioQueue = new SplQueue;
         $this->videoQueue = new SplQueue;
+        $this->previous = [];
         $this->packetDeferred?->complete(false);
         $this->packetDeferred = null;
     }
@@ -363,6 +490,7 @@ final class DjLoop extends VoIPLoop
         $this->inputFiles = [];
         $this->holdFiles = [];
         $this->playingHold = false;
+        $this->previous = [];
         $this->skip();
         $this->announceVideoStopped();
     }
@@ -405,11 +533,17 @@ final class DjLoop extends VoIPLoop
     }
 
     /**
-     * Files to play on hold.
+     * Files to play on hold: they replace the hold file being played (if any) right away.
      */
     public function playOnHold(LocalFile|RemoteUrl|ReadableStream ...$files): void
     {
         $this->holdFiles = array_map(self::snapshot(...), $files);
+        $this->holdIndex = 0;
+        if ($this->playingHold) {
+            $this->playingHold = false;
+            $this->skip();
+            return;
+        }
         $this->startReader();
     }
 
@@ -418,7 +552,16 @@ final class DjLoop extends VoIPLoop
      * ==================================================================== */
 
     /**
-     * Pull the next OGG-grid OPUS packet, waiting for one if the playlist is not exhausted.
+     * Only play MadelineProto's own OGG OPUS files as-is, converting the others: for the legacy
+     * libtgvoip engine, which can only send 60ms packets.
+     */
+    public function setFixedOggGrid(): void
+    {
+        $this->fixedOggGrid = true;
+    }
+
+    /**
+     * Pull the next OPUS packet of an OGG file, waiting for one if the playlist is not exhausted.
      */
     public function pullPacket(): ?string
     {
@@ -438,7 +581,24 @@ final class DjLoop extends VoIPLoop
     }
 
     /**
-     * Pull the next OGG-grid OPUS packet if one is immediately available.
+     * Wait until a frame is queued, or for at most $timeout seconds: for a track whose queue ran dry.
+     */
+    public function awaitFrame(float $timeout): void
+    {
+        $this->packetDeferred ??= new DeferredFuture;
+        $future = $this->packetDeferred->getFuture();
+        $timeoutCancellation = new DeferredCancellation;
+        $timer = EventLoop::delay($timeout, static fn () => $timeoutCancellation->cancel());
+        try {
+            $future->await($timeoutCancellation->getCancellation());
+        } catch (CancelledException) {
+        } finally {
+            EventLoop::cancel($timer);
+        }
+    }
+
+    /**
+     * Pull the next OPUS packet of an OGG file if one is immediately available.
      *
      * Used by the WebRTC playback track, which is polled from a callback that must never suspend.
      */
@@ -447,9 +607,11 @@ final class DjLoop extends VoIPLoop
         if ($this->pause || $this->oggQueue->isEmpty()) {
             return null;
         }
+        /** @var array{data: string, position: ?list{int, int}, file: int} $packet */
         $packet = $this->oggQueue->dequeue();
+        $this->oggQueueSamples -= Ogg::packetDuration($packet['data']);
         $this->releaseReader();
-        return $packet;
+        return $packet['data'];
     }
 
     public function hasWebmAudio(): bool
@@ -467,9 +629,10 @@ final class DjLoop extends VoIPLoop
         if ($this->webmAudioQueue->isEmpty()) {
             return null;
         }
-        /** @var array{data: string, timestamp: int, file: int} $frame */
+        /** @var array{data: string, timestamp: int, position: ?list{int, int}, file: int} $frame */
         $frame = $this->webmAudioQueue->dequeue();
-        $this->setPlaybackPosition((int) ($frame['timestamp'] * 1000 / self::AUDIO_CLOCK_RATE));
+        $this->markPlayed('audio', $frame);
+        $this->setPlaybackPosition((int) ($frame['timestamp'] * 1000 / self::AUDIO_CLOCK_RATE), $frame['file']);
         $this->releaseReader();
         return $frame;
     }
@@ -482,8 +645,9 @@ final class DjLoop extends VoIPLoop
         if ($this->videoQueue->isEmpty()) {
             return null;
         }
-        /** @var array{data: string, timestamp: int, keyframe: bool, file: int} $frame */
+        /** @var array{data: string, timestamp: int, keyframe: bool, position: ?list{int, int}, file: int} $frame */
         $frame = $this->videoQueue->dequeue();
+        $this->markPlayed('video', $frame);
         $this->releaseReader();
         return $frame;
     }
@@ -494,12 +658,49 @@ final class DjLoop extends VoIPLoop
     }
 
     /**
+     * Record that a frame of the current file was played.
+     *
+     * @param 'audio'|'video' $kind
+     * @param array{position: ?list{int, int}, file: int, ...} $frame
+     */
+    private function markPlayed(string $kind, array $frame): void
+    {
+        if ($frame['position'] !== null) {
+            $this->playedPositions[$frame['file']][$kind] = $frame['position'];
+        }
+    }
+
+    /**
+     * The position of the first queued frame of a file, i.e. the first one that was not played yet.
+     *
+     * @param int $generation The {@see self::$generation} of the file.
+     *
+     * @return ?list{int, int}
+     */
+    private function firstUnplayedPosition(int $generation): ?array
+    {
+        $first = null;
+        foreach ([$this->oggQueue, $this->webmAudioQueue, $this->videoQueue] as $queue) {
+            foreach ($queue as $frame) {
+                if ($frame['position'] !== null && $frame['file'] === $generation) {
+                    if ($first === null || $frame['position'] < $first) {
+                        $first = $frame['position'];
+                    }
+                    // The rest of the queue comes after it.
+                    break;
+                }
+            }
+        }
+        return $first;
+    }
+
+    /**
      * Whether a WebM file is currently being played, even if a queue momentarily ran dry because the
      * reader is behind.
      */
     public function isWebmPlaying(): bool
     {
-        return $this->currentKind === 'matroska' && !$this->isExhausted();
+        return $this->playsFrames() && !$this->isExhausted();
     }
 
     /**
@@ -512,7 +713,7 @@ final class DjLoop extends VoIPLoop
      */
     public function isExhausted(): bool
     {
-        $exhausted = $this->currentKind !== 'matroska'
+        $exhausted = !$this->playsFrames()
             || ($this->finishedCurrent && $this->webmAudioQueue->isEmpty() && $this->videoQueue->isEmpty());
         if ($exhausted && $this->webmVideoAnnounced && $this->inputFiles === [] && $this->holdFiles === []) {
             $this->announceVideoStopped();
@@ -522,10 +723,15 @@ final class DjLoop extends VoIPLoop
 
     /**
      * Report how far playback has progressed, in milliseconds.
+     *
+     * @param ?int $file The `file` of the frame that was played: the playback of the frames of a
+     *                   previous file doesn't count for the current one.
      */
-    public function setPlaybackPosition(int $milliseconds): void
+    public function setPlaybackPosition(int $milliseconds, ?int $file = null): void
     {
-        $this->playbackMs = max($this->playbackMs, $milliseconds);
+        if ($file === null || $file === $this->generation) {
+            $this->playbackMs = max($this->playbackMs, $milliseconds);
+        }
         $this->releaseReader();
     }
 
@@ -577,7 +783,18 @@ final class DjLoop extends VoIPLoop
                     Tools::sleep(0.1);
                     continue;
                 }
+                $generation = $this->generation + 1;
                 $played = $this->streamCurrentFile();
+                // Keep the files while their frames are queued, to resume them if the session is saved before they are played.
+                $this->previous = array_values(array_filter(
+                    $this->previous,
+                    fn (array $previous): bool => $this->firstUnplayedPosition($previous['generation']) !== null,
+                ));
+                if ($this->currentResumable && $this->generation === $generation) {
+                    $this->previous[] = $this->fileState();
+                }
+                // Only the played positions of those files are still needed.
+                $this->playedPositions = array_intersect_key($this->playedPositions, array_flip(array_column($this->previous, 'generation')));
                 $this->currentFile = null;
                 $this->currentKind = null;
                 $this->currentDesc = null;
@@ -626,6 +843,7 @@ final class DjLoop extends VoIPLoop
             $this->resumeUnitOffset = -1;
             $this->resumeTracks = [];
             $this->resumeTimestampScale = 0;
+            $this->resumePlayed = [];
             $this->bufferedUntilMs = 0;
             $this->playbackMs = 0;
             $this->currentKind = null;
@@ -649,14 +867,23 @@ final class DjLoop extends VoIPLoop
             $file = $item instanceof StreamSnapshot ? $item->open() : $item;
             [$kind, $source, $convert] = $this->prepareSource($file, $cancellation, $resuming);
             $this->currentKind = $kind;
-            if ($kind !== 'matroska') {
+            if ($this->rtmp && $kind === 'ogg') {
+                throw new AssertionError(
+                    'An RTMP livestream can only play H.264 video and AAC audio, in an MP4 or Matroska file: '
+                    .$this->describe($item).' is not one, please convert it, e.g. with ffmpeg -i input -c:v libx264 -c:a aac -movflags +faststart output.mp4'
+                );
+            }
+            if ($kind === 'ogg') {
                 // An OGG file has no video: stop the video a previous file left announced.
                 $this->announceVideoStopped();
             }
-            // A resumable stream can be reopened and skipped forward, like a file.
-            $this->currentResumable = !$convert && (!$source instanceof ReadableStream || $item instanceof StreamSnapshot);
+            // A resumable stream can be reopened and skipped forward, like a file; MP4 files are only
+            // played from their start.
+            $this->currentResumable = $kind !== 'mp4' && !$convert && (!$source instanceof ReadableStream || $item instanceof StreamSnapshot);
             if ($kind === 'matroska') {
                 $this->streamMatroska($source, $file, $generation, $cancellation, $resuming);
+            } elseif ($kind === 'mp4') {
+                $this->streamMp4($source, $generation, $cancellation);
             } else {
                 $this->streamOgg($source, $file, $convert, $generation, $cancellation, $resuming);
             }
@@ -706,8 +933,13 @@ final class DjLoop extends VoIPLoop
                     return ['matroska', $source, false];
                 }
             }
+            // The first box of an MP4 file is its ftyp (or styp, or straight its moov).
+            if (\in_array(substr($first, 4, 4), ['ftyp', 'styp', 'moov'], true)) {
+                return ['mp4', $source, false];
+            }
             if (str_starts_with($first, self::OGG_MAGIC)) {
-                return ['ogg', $source, false];
+                // A stream can't be probed for MadelineProto's own encoding.
+                return ['ogg', $source, $this->fixedOggGrid];
             }
             return ['ogg', $source, true];
         }
@@ -722,14 +954,27 @@ final class DjLoop extends VoIPLoop
             // Not a Matroska container.
         }
         try {
+            $probe = new Mp4($file, $cancellation);
+            if ($probe->tracks !== []) {
+                return ['mp4', $file, false];
+            }
+        } catch (CancelledException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            if ($e->getMessage() === Mp4::MOOV_AT_END) {
+                throw $e;
+            }
+            // Not an MP4 file.
+        }
+        try {
             $ogg = new Ogg($file, $cancellation);
-            if (\in_array('MADELINE_ENCODER_V=1', $ogg->comments, true)) {
+            if (!$this->fixedOggGrid || \in_array('MADELINE_ENCODER_V=1', $ogg->comments, true)) {
                 return ['ogg', $file, false];
             }
         } catch (CancelledException $e) {
             throw $e;
         } catch (Throwable) {
-            // Not a native OGG OPUS file.
+            // Not an OGG OPUS file.
         }
         return ['ogg', $file, true];
     }
@@ -746,7 +991,9 @@ final class DjLoop extends VoIPLoop
             $ogg = new Ogg($file, $cancellation, $this->resumeOffset);
         } elseif ($convert) {
             if (!Tools::canConvertOgg()) {
-                throw new AssertionError('The passed file was not generated by MadelineProto or @libtgvoipbot, please pre-convert it using @libtgvoip bot or install FFI and ffmpeg to perform realtime conversion!');
+                throw new AssertionError($this->fixedOggGrid
+                    ? 'The passed file was not generated by MadelineProto or @libtgvoipbot, please pre-convert it using @libtgvoip bot or install FFI and ffmpeg to perform realtime conversion!'
+                    : 'The passed file is not a WebM/Matroska or OGG OPUS file, please convert it (see https://docs.madelineproto.xyz/docs/CALLS.html#supported-formats) or install FFI and ffmpeg to perform realtime conversion!');
             }
             // Convert to OGG OPUS on the fly; the resulting pipe is not seekable, so it is not resumable.
             $pipe = new Pipe(4096);
@@ -772,9 +1019,14 @@ final class DjLoop extends VoIPLoop
                 $skip--;
                 continue;
             }
-            $this->oggQueue->enqueue($packet);
-            $this->trackResume($unit);
-            $this->bufferedUntilMs += self::OGG_FRAME_MS;
+            $this->oggQueue->enqueue([
+                'data' => $packet,
+                'position' => $this->trackResume($unit),
+                'file' => $generation,
+            ]);
+            $samples = Ogg::packetDuration($packet);
+            $this->oggQueueSamples += $samples;
+            $this->bufferedUntilMs += intdiv($samples, 48);
             $this->wakePacketWaiters();
             $this->throttle($generation, $cancellation);
         }
@@ -803,6 +1055,15 @@ final class DjLoop extends VoIPLoop
             $this->resumeTimestampScale = $matroska->getTimestampScale();
             $this->selectTracks($matroska);
         }
+        $this->currentHasVideo = $this->videoCodec !== null;
+        $this->currentHasAudio = false;
+        if (!$this->videoOnly) {
+            foreach ($matroska->tracks as $track) {
+                if (isset($this->audioCodecs()[$track['codec']])) {
+                    $this->currentHasAudio = true;
+                }
+            }
+        }
         $skip = $resuming ? $this->resumeSkip : 0;
         foreach ($matroska->frames as $frame) {
             if ($generation !== $this->generation) {
@@ -814,8 +1075,41 @@ final class DjLoop extends VoIPLoop
                 continue;
             }
             // Dropped frames are counted too, as the skip above counts all frames of the unit.
-            $this->trackResume($unit);
-            if ($this->pushFrame($frame)) {
+            $position = $this->trackResume($unit);
+            $played = $this->resumePlayed[isset($this->audioCodecs()[$frame['codec']]) ? 'audio' : 'video'] ?? null;
+            if ($resuming && $position !== null && $played !== null && $position <= $played) {
+                // Played before the restart, while frames of the other kind before it weren't.
+                continue;
+            }
+            if ($this->pushFrame($frame, $position)) {
+                $this->wakePacketWaiters();
+                $this->throttle($generation, $cancellation);
+            }
+        }
+    }
+
+    /**
+     * Read an MP4 file, from its start: unlike a Matroska one, it's not resumed from where it was.
+     */
+    private function streamMp4(LocalFile|RemoteUrl|ReadableStream $source, int $generation, ?Cancellation $cancellation): void
+    {
+        $mp4 = new Mp4($source, $cancellation);
+        $this->resumeTracks = [];
+        $this->selectTracks($mp4);
+        $this->currentHasVideo = $this->videoCodec !== null;
+        $this->currentHasAudio = false;
+        if (!$this->videoOnly) {
+            foreach ($mp4->tracks as $track) {
+                if (isset($this->audioCodecs()[$track['codec']])) {
+                    $this->currentHasAudio = true;
+                }
+            }
+        }
+        foreach ($mp4->frames as $frame) {
+            if ($generation !== $this->generation) {
+                return;
+            }
+            if ($this->pushFrame($frame, null)) {
                 $this->wakePacketWaiters();
                 $this->throttle($generation, $cancellation);
             }
@@ -826,24 +1120,34 @@ final class DjLoop extends VoIPLoop
      * Enqueue one demuxed WebM frame; returns whether it was kept (an untransmittable frame is not).
      *
      * @param array{track: int, codec: string, type: int, data: string, timestamp: int, keyframe: bool} $frame
+     * @param ?list{int, int} $position
      */
-    private function pushFrame(array $frame): bool
+    private function pushFrame(array $frame, ?array $position): bool
     {
         $timestampMs = $frame['timestamp'];
         $this->bufferedUntilMs = max($this->bufferedUntilMs, $timestampMs);
-        if (isset(self::AUDIO_CODECS[$frame['codec']])) {
+        if (isset($this->audioCodecs()[$frame['codec']])) {
             // A presentation/screencast stream transmits video only; drop its audio.
             if ($this->videoOnly) {
                 return false;
             }
+            $data = $frame['data'];
+            if ($this->rtmp) {
+                // The audio track picked in selectTracks(), self-describing with an ADTS header.
+                if ($frame['track'] !== $this->aacTrack || $this->aacConfig === null) {
+                    return false;
+                }
+                $data = FlvTags::adtsHeader($this->aacConfig, \strlen($data)).$data;
+            }
             $this->webmAudioQueue->enqueue([
-                'data' => $frame['data'],
+                'data' => $data,
                 'timestamp' => (int) ($timestampMs * self::AUDIO_CLOCK_RATE / 1000),
+                'position' => $position,
                 'file' => $this->generation,
             ]);
             return true;
         }
-        if ($this->videoCodec === null || (self::VIDEO_CODECS[$frame['codec']] ?? null) !== $this->videoCodec) {
+        if ($this->videoCodec === null || ($this->videoCodecs()[$frame['codec']] ?? null) !== $this->videoCodec) {
             return false;
         }
         // Confirm the VP9 profile from the first real keyframe (no configuration record was stored);
@@ -860,6 +1164,7 @@ final class DjLoop extends VoIPLoop
             'data' => $this->framing?->convert($frame['data'], $frame['keyframe']) ?? $frame['data'],
             'timestamp' => (int) ($timestampMs * self::VIDEO_CLOCK_RATE / 1000),
             'keyframe' => $frame['keyframe'],
+            'position' => $position,
             'file' => $this->generation,
         ]);
         return true;
@@ -868,27 +1173,40 @@ final class DjLoop extends VoIPLoop
     /**
      * Record the resume point right after the frame that was just produced.
      *
+     * @return ?list{int, int} The position of the frame: the byte offset of its unit (OGG page / MKV
+     *                         cluster) and how many frames of the unit come before it, i.e. the resume
+     *                         point right before it. Null if the file can't be resumed.
+     *
      * @psalm-external-mutation-free
      */
-    private function trackResume(int $unit): void
+    private function trackResume(int $unit): ?array
     {
         if (!$this->currentResumable) {
-            return;
+            return null;
         }
         if ($unit !== $this->resumeUnitOffset) {
             $this->resumeUnitOffset = $unit;
             $this->resumeSkip = 0;
         }
+        $position = [$unit, $this->resumeSkip];
         $this->resumeSkip++;
         $this->resumeOffset = $unit;
+        return $position;
     }
 
     /**
      * Block the reader while the look-ahead buffer is full, so memory stays bounded.
+     *
+     * Never while a track has nothing to play, though: the next frame of every track must be read
+     * before it's due, whatever the look-ahead. Unless the file is badly interleaved (or one of its
+     * tracks ended early): then up to {@see self::MAX_INTERLEAVING_MS} more are read.
      */
     private function throttle(int $generation, ?Cancellation $cancellation): void
     {
-        while ($this->bufferedAheadMs() >= self::BUFFER_AHEAD_MS) {
+        $lookahead = $this->instance->getVoIPSettings()->getPlaybackLookahead();
+        while (($ahead = $this->bufferedAheadMs()) > $lookahead
+            && ($ahead > $lookahead + self::MAX_INTERLEAVING_MS || !$this->isStarving())
+        ) {
             if ($generation !== $this->generation || $this->instance->isCallEnded()) {
                 return;
             }
@@ -901,12 +1219,24 @@ final class DjLoop extends VoIPLoop
         }
     }
 
+    /**
+     * Whether a track has no frame queued, while the current file has frames for it.
+     */
+    private function isStarving(): bool
+    {
+        if ($this->playsFrames()) {
+            return ($this->currentHasAudio && $this->webmAudioQueue->isEmpty())
+                || ($this->currentHasVideo && $this->videoQueue->isEmpty());
+        }
+        return $this->oggQueue->isEmpty();
+    }
+
     private function bufferedAheadMs(): int
     {
-        if ($this->currentKind === 'matroska') {
+        if ($this->playsFrames()) {
             return $this->bufferedUntilMs - $this->playbackMs;
         }
-        return $this->oggQueue->count() * self::OGG_FRAME_MS;
+        return intdiv($this->oggQueueSamples, 48);
     }
 
     /** Release the reader from back-pressure once a track has drained a queue. */
@@ -932,7 +1262,7 @@ final class DjLoop extends VoIPLoop
     private function hasPendingOggWork(): bool
     {
         return !$this->oggQueue->isEmpty()
-            || ($this->currentKind !== 'matroska' && !$this->finishedCurrent)
+            || (!$this->playsFrames() && !$this->finishedCurrent)
             || $this->inputFiles !== []
             || (!$this->playingHold && $this->holdFiles !== []);
     }
@@ -948,17 +1278,22 @@ final class DjLoop extends VoIPLoop
     /**
      * Work out what of a WebM file we can transmit, pin the video codec and warn about the rest.
      */
-    private function selectTracks(Matroska $matroska): void
+    private function selectTracks(Matroska|Mp4 $matroska): void
     {
         $this->videoCodec = null;
         $this->videoParameters = [];
         $this->videoProfileFromFrame = false;
         $this->framing = null;
+        $this->aacTrack = null;
+        $this->aacConfig = null;
+        if ($this->rtmp) {
+            $this->selectRtmpAudio($matroska);
+        }
         foreach ($matroska->tracks as $track) {
-            if ($this->videoCodec !== null || !isset(self::VIDEO_CODECS[$track['codec']])) {
+            if ($this->videoCodec !== null || !isset($this->videoCodecs()[$track['codec']])) {
                 continue;
             }
-            $this->videoCodec = self::VIDEO_CODECS[$track['codec']];
+            $this->videoCodec = $this->videoCodecs()[$track['codec']];
             $private = $track['private'] ?? '';
             if ($this->videoCodec === 'H264' || $this->videoCodec === 'H265') {
                 $this->framing = new H264Framing($private, $this->videoCodec === 'H265');
@@ -972,8 +1307,8 @@ final class DjLoop extends VoIPLoop
                 $this->videoProfileFromFrame = true;
             }
         }
-        $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_VIDEO, self::VIDEO_CODECS);
-        $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_AUDIO, self::AUDIO_CODECS);
+        $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_VIDEO, $this->videoCodecs());
+        $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_AUDIO, $this->audioCodecs());
         if ($this->videoCodec !== null) {
             // The transport has to be renegotiated before the first frame goes out, or the peer
             // would decode it as whatever codec the previous file used.
@@ -986,9 +1321,87 @@ final class DjLoop extends VoIPLoop
     }
 
     /**
+     * Pick the AAC track of a file to play for an RTMP livestream, refusing files with tracks it can't carry.
+     *
+     * @throws AssertionError If the file has audio or video an RTMP livestream can't carry, or neither.
+     */
+    private function selectRtmpAudio(Matroska|Mp4 $demuxer): void
+    {
+        $unsupported = [];
+        $hasVideo = false;
+        $hasH264 = false;
+        $hasAudio = false;
+        foreach ($demuxer->tracks as $number => $track) {
+            if ($track['type'] === Matroska::TRACK_TYPE_VIDEO) {
+                $hasVideo = true;
+                if (isset(self::RTMP_VIDEO_CODECS[$track['codec']])) {
+                    $hasH264 = true;
+                } else {
+                    $unsupported[] = $track['codec'];
+                }
+            } elseif ($track['type'] === Matroska::TRACK_TYPE_AUDIO) {
+                $hasAudio = true;
+                if (!isset(self::RTMP_AUDIO_CODECS[$track['codec']])) {
+                    $unsupported[] = $track['codec'];
+                } elseif ($this->aacTrack === null) {
+                    if (($track['private'] ?? '') === '') {
+                        throw new AssertionError("The AAC audio of the file played in $this has no AudioSpecificConfig (CodecPrivate), please remux it, e.g. with ffmpeg -i input -c copy output.mp4");
+                    }
+                    // Fails right away if ADTS can't carry its configuration.
+                    FlvTags::adtsHeader($track['private'], 0);
+                    $this->aacTrack = $number;
+                    $this->aacConfig = $track['private'];
+                }
+            }
+        }
+        // Other tracks next to the ones we can play are only dropped, see warnAboutDroppedTracks().
+        if (($hasVideo && !$hasH264) || ($hasAudio && $this->aacTrack === null) || (!$hasH264 && $this->aacTrack === null)) {
+            throw new AssertionError(
+                "An RTMP livestream can only play H.264 video and AAC audio, but the file played in $this has "
+                .($unsupported !== [] ? implode(', ', $unsupported) : 'neither')
+                .', please convert it, e.g. with ffmpeg -i input -c:v libx264 -c:a aac -movflags +faststart output.mp4'
+            );
+        }
+    }
+
+    /**
+     * Whether the current file is a container of audio and video frames (rather than an OGG file).
+     *
+     * @psalm-mutation-free
+     */
+    private function playsFrames(): bool
+    {
+        return $this->currentKind === 'matroska' || $this->currentKind === 'mp4';
+    }
+
+    /**
+     * The video codecs that can be played, as `Matroska CodecID => SDP encoding name`.
+     *
+     * @return array<string, string>
+     *
+     * @psalm-mutation-free
+     */
+    private function videoCodecs(): array
+    {
+        return $this->rtmp ? self::RTMP_VIDEO_CODECS : self::VIDEO_CODECS;
+    }
+
+    /**
+     * The audio codecs that can be played, as `Matroska CodecID => SDP encoding name`.
+     *
+     * @return array<string, string>
+     *
+     * @psalm-mutation-free
+     */
+    private function audioCodecs(): array
+    {
+        return $this->rtmp ? self::RTMP_AUDIO_CODECS : self::AUDIO_CODECS;
+    }
+
+    /**
      * @param array<string, string> $supported
      */
-    private function warnAboutDroppedTracks(Matroska $matroska, int $kind, array $supported): void
+    private function warnAboutDroppedTracks(Matroska|Mp4 $matroska, int $kind, array $supported): void
     {
         $found = [];
         foreach ($matroska->tracks as $track) {

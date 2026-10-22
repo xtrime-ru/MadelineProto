@@ -531,6 +531,13 @@ final class Connection
             }
         } elseif ($method === 'users.getStoriesMaxIDs') {
             $method = 'stories.getPeerMaxIDs';
+        } elseif (\in_array($method, ['channels.createForumTopic', 'channels.editForumTopic', 'channels.deleteTopicHistory', 'channels.getForumTopics', 'channels.getForumTopicsByID', 'channels.updatePinnedForumTopic', 'channels.reorderPinnedForumTopics'], true)) {
+            // Moved to messages.* (forums of private chats with bots too), with a peer.
+            $method = 'messages.'.substr($method, \strlen('channels.'));
+            if (isset($arguments['channel'])) {
+                $arguments['peer'] ??= $arguments['channel'];
+                unset($arguments['channel']);
+            }
         } elseif ($method === 'contacts.toggleStoriesHidden') {
             $method = 'stories.togglePeerStoriesHidden';
             if (isset($arguments['id'])) {
@@ -551,7 +558,12 @@ final class Connection
         if (!$message->hasSerializedBody()) {
             $body = $message->getBody();
             if ($message->isMethod) {
+                $resumableCall = $body['resumableCall'] ?? null;
                 $body = $this->API->getTL()->serializeMethod($message->constructor, $body);
+                if ($resumableCall !== null) {
+                    // Its files were uploaded while serializing it.
+                    $this->API->resumableCallSent($resumableCall);
+                }
                 if ($message->takeoutId !== null) {
                     $body = $this->API->getTL()->serializeMethod(
                         'invokeWithTakeout',

@@ -39,6 +39,7 @@ use danog\MadelineProto\Ogg;
 use danog\MadelineProto\RecordingEvent;
 use danog\MadelineProto\RecordingFormat;
 use danog\MadelineProto\RemoteUrl;
+use danog\MadelineProto\RestoresDeclaredProperties;
 use danog\MadelineProto\RPCError\CallAlreadyAcceptedError;
 use danog\MadelineProto\RPCError\CallAlreadyDeclinedError;
 use danog\MadelineProto\SecurityException;
@@ -58,6 +59,7 @@ use Webmozart\Assert\Assert;
  */
 final class PrivateCallController implements CallControllerInterface
 {
+    use RestoresDeclaredProperties;
     /**
      * The [phoneCallProtocol](https://core.telegram.org/constructor/phoneCallProtocol) we advertise.
      *
@@ -119,15 +121,20 @@ final class PrivateCallController implements CallControllerInterface
         $this->public = new PrivateCall($API, $call);
         $call['_'] = 'inputPhoneCall';
         $this->diskJockey = new DjLoop($this);
-        Assert::true($this->diskJockey->start());
         $this->call = $call;
         if ($this->public->outgoing) {
             $this->callState = CallState::REQUESTED;
+            Assert::true($this->diskJockey->start());
         } else {
+            // Every session of the account gets the incoming call, and only the one that accepts it is
+            // in it: the disk jockey is only started once we accept it (its playlist works before).
             $this->callState = CallState::INCOMING;
         }
         $this->authMutex = new LocalMutex;
     }
+
+    /** Whether the call was restored from a session, and is yet to be resumed by {@see self::resumeAfterRestart()}. */
+    private bool $resumePending = false;
 
     /**
      * @psalm-mutation-free
@@ -144,9 +151,39 @@ final class PrivateCallController implements CallControllerInterface
         // The engines (WebRTC and libtgvoip alike) now serialize themselves and resume their
         // connections on wakeup, so they are kept. Only the mutex, which wraps a live suspension
         // queue, is dropped and recreated.
-        unset($result['authMutex']);
+        unset($result['authMutex'], $result['resumePending']);
 
         return $result;
+    }
+
+    /**
+     * Resume the call after the process restarted.
+     *
+     * Called by {@see MTProto::wakeup()} once the MTProto session is reset and connected, never from
+     * __unserialize(): by then the whole call graph is restored and callState is known-good, and the
+     * requests made while resuming are not lost to the reset of the session.
+     *
+     * @internal
+     */
+    public function resumeAfterRestart(): void
+    {
+        if (!$this->resumePending) {
+            return;
+        }
+        $this->resumePending = false;
+        if ($this->callState !== CallState::RUNNING) {
+            return;
+        }
+        // The WebRTC/libtgvoip engine restored itself and its transport resumes on its own. Restart
+        // the demuxer/reader, the playback producers and the (file-backed) recorders, which were all
+        // left dormant during deserialization.
+        $this->diskJockey->resumeReader();
+        $this->tgcallsController?->resume();
+        // The legacy (libtgvoip) engine still re-arms its recorder from the remembered output.
+        if ($this->legacyController !== null) {
+            $this->applyPendingOutput();
+        }
+        $this->log("Resumed $this after a restart of the process.");
     }
     /**
      * Wakeup function.
@@ -154,15 +191,18 @@ final class PrivateCallController implements CallControllerInterface
     public function __unserialize(array $data): void
     {
         $this->authMutex = new LocalMutex;
-        foreach ($data as $key => $value) {
-            $this->{$key} = $value;
-        }
+        $this->restoreDeclaredProperties($data);
         // Defensively drop a call that came back without its full essential state (a half-constructed
         // call that slipped into the session): force it ENDED and start nothing. Because no subsystem
-        // starts async work during deserialization any more (that is all deferred to resume() below),
+        // starts async work during deserialization any more (that is all deferred to resumeAfterRestart()),
         // this is the single point that decides whether a restored call comes back to life at all.
         if (!isset($this->callState) || !isset($this->public) || !isset($this->call)
             || $this->callState === CallState::ENDED
+            // A running call always has an engine (it is created in the same synchronous step that
+            // starts the call). One without comes from the releases that ran libtgvoip inside this
+            // class: its state (voipState, sockets, timestamps, packet queue...) has no counterpart in
+            // the engines and was just dropped, so the call cannot be resumed.
+            || ($this->callState === CallState::RUNNING && $this->tgcallsController === null && $this->legacyController === null)
         ) {
             $this->callState = CallState::ENDED;
             return;
@@ -171,25 +211,12 @@ final class PrivateCallController implements CallControllerInterface
             $this->API->setupLogger();
         }
         $this->diskJockey ??= new DjLoop($this);
-        Assert::true($this->diskJockey->start());
-        // Resume everything on the next tick — NEVER here: deserialization must stay synchronous, and
-        // resuming reopens files and starts loops (async). By the time this runs the whole call graph
-        // is restored and callState is known-good, so nothing dereferences half-restored state.
-        EventLoop::queue(function (): void {
-            if ($this->callState !== CallState::RUNNING) {
-                return;
-            }
-            // The WebRTC/libtgvoip engine restored itself and its transport resumes on its own. Restart
-            // the demuxer/reader, the playback producers and the (file-backed) recorders, which were all
-            // left dormant during deserialization.
-            $this->diskJockey->resumeReader();
-            $this->tgcallsController?->resume();
-            // The legacy (libtgvoip) engine still re-arms its recorder from the remembered output.
-            if ($this->legacyController !== null) {
-                $this->applyPendingOutput();
-            }
-            $this->log("Resumed $this after a restart of the process.");
-        });
+        if ($this->callState !== CallState::INCOMING) {
+            Assert::true($this->diskJockey->start());
+        }
+        // Resumed by MTProto::wakeup() once the MTProto session is reset and connected, see resumeAfterRestart():
+        // deserialization must stay synchronous, and resuming reopens files, starts loops and makes requests.
+        $this->resumePending = true;
     }
 
     /**
@@ -201,10 +228,10 @@ final class PrivateCallController implements CallControllerInterface
         $lock = $this->authMutex->acquire();
         try {
             if ($this->callState !== CallState::REQUESTED) {
-                $this->log(sprintf(Lang::$current_lang['call_error_2'], $this->public->callID));
+                $this->log(\sprintf(Lang::$current_lang['call_error_2'], $this->public->callID));
                 return false;
             }
-            $this->log(sprintf(Lang::$current_lang['call_confirming'], $this->public->otherID), Logger::VERBOSE);
+            $this->log(\sprintf(Lang::$current_lang['call_confirming'], $this->public->otherID), Logger::VERBOSE);
             $dh_config = $this->API->getDhConfig();
             $params['g_b'] = new BigInteger((string) $params['g_b'], 256);
             Crypt::checkG($params['g_b'], $dh_config['p']);
@@ -217,11 +244,12 @@ final class PrivateCallController implements CallControllerInterface
                     'protocol' => self::CALL_PROTOCOL,
                 ]))['phone_call'];
             } catch (CallAlreadyAcceptedError) {
-                $this->log(sprintf(Lang::$current_lang['call_already_accepted'], $params['id']));
+                $this->log(\sprintf(Lang::$current_lang['call_already_accepted'], $params['id']));
                 return true;
             } catch (CallAlreadyDeclinedError) {
+                // Already ended by the other party: nothing to discard.
                 $this->log(Lang::$current_lang['call_already_declined']);
-                $this->discard(DiscardReason::HANGUP);
+                $this->end();
                 return false;
             }
             \assert(isset($this->call['g_a']) && \is_string($this->call['g_a']));
@@ -241,19 +269,28 @@ final class PrivateCallController implements CallControllerInterface
     {
         $lock = $this->authMutex->acquire();
         try {
-            if ($this->callState === CallState::RUNNING || $this->callState === CallState::ENDED) {
+            // An outgoing call has nothing to accept: we are already in it.
+            if ($this->public->outgoing || $this->callState === CallState::RUNNING || $this->callState === CallState::ENDED) {
                 return $this;
             }
             Assert::eq($this->callState->name, CallState::INCOMING->name);
 
-            $this->log(sprintf(Lang::$current_lang['accepting_call'], $this->public->otherID), Logger::VERBOSE);
+            $this->log(\sprintf(Lang::$current_lang['accepting_call'], $this->public->otherID), Logger::VERBOSE);
             $dh_config = $this->API->getDhConfig($cancellation);
+            if ($this->callState !== CallState::INCOMING) {
+                // Ended meanwhile: discarded, or expired, see expireAfterRestart().
+                return $this;
+            }
             $this->log('Generating b...', Logger::VERBOSE);
             $b = BigInteger::randomRange(Magic::$two, $dh_config['p']->subtract(Magic::$two));
             $g_b = $dh_config['g']->powMod($b, $dh_config['p']);
             Crypt::checkG($g_b, $dh_config['p']);
 
             $this->callState = CallState::ACCEPTED;
+            // Persisted along with the state: if the process restarts while phone.acceptCall is in flight,
+            // the server may still accept the call, and the phoneCall that follows completes it with b.
+            $this->call['b'] = $b;
+            $this->diskJockey->start();
             try {
                 $this->API->methodCallAsyncRead('phone.acceptCall', [
                     'peer' => [
@@ -266,14 +303,16 @@ final class PrivateCallController implements CallControllerInterface
                     'cancellation' => $cancellation,
                 ]);
             } catch (CallAlreadyAcceptedError) {
-                $this->log(sprintf(Lang::$current_lang['call_already_accepted'], $this->public->callID));
+                // Accepted by another session of the account, which is in the call: leave it alone.
+                $this->log(\sprintf(Lang::$current_lang['call_already_accepted'], $this->public->callID));
+                $this->end();
                 return $this;
             } catch (CallAlreadyDeclinedError) {
+                // Already ended (by the caller, or declined by another session): nothing to discard.
                 $this->log(Lang::$current_lang['call_already_declined']);
-                $this->discard(DiscardReason::HANGUP);
+                $this->end();
                 return $this;
             }
-            $this->call['b'] = $b;
 
             return $this;
         } finally {
@@ -290,11 +329,11 @@ final class PrivateCallController implements CallControllerInterface
     {
         $lock = $this->authMutex->acquire();
         try {
-            if ($this->callState !== CallState::ACCEPTED) {
+            if ($this->callState !== CallState::ACCEPTED || !isset($this->call['b'])) {
                 return false;
             }
 
-            $this->log(sprintf(Lang::$current_lang['call_completing'], $this->public->otherID), Logger::VERBOSE);
+            $this->log(\sprintf(Lang::$current_lang['call_completing'], $this->public->otherID), Logger::VERBOSE);
             $dh_config = $this->API->getDhConfig();
             if (hash('sha256', (string) $params['g_a_or_b'], true) !== (string) $this->call['g_a_hash']) {
                 throw new SecurityException('Invalid g_a!');
@@ -358,6 +397,7 @@ final class PrivateCallController implements CallControllerInterface
         }
         if ($version->isLegacy()) {
             $this->log("Starting the libtgvoip engine of $this using protocol {$version->value}", Logger::NOTICE);
+            $this->diskJockey->setFixedOggGrid();
             $this->legacyController = new LegacyController(
                 $this,
                 $this->authKey,
@@ -433,12 +473,11 @@ final class PrivateCallController implements CallControllerInterface
             // see https://core.telegram.org/api/calls#migrating-to-a-conference-call.
             $this->public->conferenceSlug = $reason['slug'] ?? null;
         }
-        $local = $this->public->discardReason;
-        if ($local === null || $local === DiscardReason::MIGRATE_CONFERENCE_CALL) {
-            // We cannot echo back a migration reason, it requires a conference slug of our own.
-            $local = DiscardReason::HANGUP;
-        }
-        $this->discard($local);
+        // The call is already over: end it locally without echoing a phone.discardCall, as TDLib and
+        // tdesktop do. An incoming call is also discarded for the other sessions of the account when one
+        // of them accepts it (tdesktop's EndedByOtherDevice): echoing the discard from them would hang up
+        // the call of the session that is in it.
+        $this->end();
     }
 
     /**
@@ -487,18 +526,9 @@ final class PrivateCallController implements CallControllerInterface
             return $this;
         }
         $this->API->waitForInit();
-        $this->API->cleanupCall($this->public->callID);
-        $this->callState = CallState::ENDED;
-        $this->diskJockey->discard();
-        $this->skip();
+        $this->end();
 
-        $this->log("Now closing $this");
-        $this->tgcallsController?->close();
-        $this->tgcallsController = null;
-        $this->legacyController?->close();
-        $this->legacyController = null;
-
-        $this->log(sprintf(Lang::$current_lang['call_discarding'], $this->public->callID), Logger::VERBOSE);
+        $this->log(\sprintf(Lang::$current_lang['call_discarding'], $this->public->callID), Logger::VERBOSE);
         try {
             $this->API->methodCallAsyncRead('phone.discardCall', [
                 'video' => $this->public->video,
@@ -516,10 +546,106 @@ final class PrivateCallController implements CallControllerInterface
         return $this;
     }
 
+    /**
+     * End the call locally, without making any request.
+     */
+    private function end(): void
+    {
+        if ($this->callState === CallState::ENDED) {
+            return;
+        }
+        $this->API->cleanupCall($this->public->callID);
+        $this->callState = CallState::ENDED;
+        $this->diskJockey->discard();
+        $this->skip();
+
+        $this->log("Now closing $this");
+        $this->tgcallsController?->close();
+        $this->tgcallsController = null;
+        $this->legacyController?->close();
+        $this->legacyController = null;
+    }
+
+    /**
+     * End an incoming call we never answered once it can no longer be ringing, without making any
+     * request: it was answered or declined by another session of the account, or ended while this
+     * one was not running (the end of a call is only notified to running sessions).
+     *
+     * @internal
+     *
+     * @param int $ringTimeout How long an incoming call rings at most, in seconds.
+     *
+     * @return bool Whether the call was ended.
+     */
+    public function forgetIfUnanswered(int $ringTimeout): bool
+    {
+        if (!$this->isUnanswered() || time() - $this->public->date <= $ringTimeout) {
+            return false;
+        }
+        $this->log("Forgetting $this, which was not answered by this session");
+        $this->end();
+        return true;
+    }
+
+    /**
+     * @psalm-mutation-free
+     */
+    private function isUnanswered(): bool
+    {
+        return $this->callState === CallState::INCOMING
+            // Left behind by a failed phone.acceptCall of older versions (accept() now sets b first).
+            || ($this->callState === CallState::ACCEPTED && !isset($this->call['b']));
+    }
+
+    /**
+     * Expire a call restored from the session whose end we may have missed (the updates of a call are
+     * only sent to running sessions), without making any request before it times out, see
+     * {@see MTProto::wakeup()}.
+     *
+     * @internal
+     *
+     * @param int $ringTimeout    How long an incoming call rings at most, in seconds.
+     * @param int $receiveTimeout How long the key exchange of an accepted call takes at most, in seconds.
+     */
+    public function expireAfterRestart(int $ringTimeout, int $receiveTimeout): void
+    {
+        if ($this->forgetIfUnanswered($ringTimeout)) {
+            return;
+        }
+        if ($this->isUnanswered()) {
+            // Still ringing: forget it once it can no longer ring, unless we answer it.
+            $delay = max(0, $this->public->date + $ringTimeout - time()) + 1;
+            EventLoop::unreference(EventLoop::delay($delay, function () use ($ringTimeout): void {
+                $this->forgetIfUnanswered($ringTimeout);
+            }));
+        } elseif ($this->callState === CallState::ACCEPTED) {
+            // Restarted between our phone.acceptCall and the phoneCall that completes the key exchange,
+            // which may have been sent while we were not running: as TDLib, give up once
+            // call_receive_timeout_ms expires. We accepted the call: discard it.
+            EventLoop::unreference(EventLoop::delay($receiveTimeout, function (): void {
+                if ($this->callState !== CallState::ACCEPTED) {
+                    return;
+                }
+                $this->log("The key exchange of $this did not complete, discarding it", Logger::WARNING);
+                try {
+                    $this->discard(DiscardReason::DISCONNECTED);
+                } catch (Throwable $e) {
+                    $this->log("Could not discard $this: $e", Logger::ERROR);
+                }
+            }));
+        }
+    }
+
     #[\Override]
     public function log(string $message, int $level = Logger::NOTICE): void
     {
         $this->API->logger->logger($message, $level);
+    }
+
+    #[\Override]
+    public function getVoIPSettings(): \danog\MadelineProto\Settings\VoIP
+    {
+        return $this->API->getSettings()->getVoip();
     }
 
     /**

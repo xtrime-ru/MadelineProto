@@ -40,6 +40,7 @@ use function Amp\delay;
  * Needs USER_SESSION and PEER_USER_SESSION, the paths of two sessions of different user accounts without an event
  * handler: the first one calls the second one, which answers and records the call.
  *
+ * @group session
  * @internal
  */
 final class CallResumeTest extends TestCase
@@ -216,7 +217,7 @@ final class CallResumeTest extends TestCase
                 $gapAt = $indexes[$x - 1];
             }
         }
-        $received = sprintf('received %d packets, from %d to %d, the largest gap being %d packets after %d', \count($indexes), $indexes[0], end($indexes), $gap, $gapAt);
+        $received = \sprintf('received %d packets, from %d to %d, the largest gap being %d packets after %d', \count($indexes), $indexes[0], end($indexes), $gap, $gapAt);
         $sorted = $indexes;
         sort($sorted);
         self::assertSame($sorted, $indexes, "The packets were not received in order: $received");

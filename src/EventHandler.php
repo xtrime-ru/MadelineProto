@@ -355,7 +355,7 @@ abstract class EventHandler extends AbstractAPI
                 $refl = new ReflectionClass($class);
                 $plugin = $pluginsPrev[$class] ?? $pluginsNew[$class] ?? $refl->newInstanceWithoutConstructor();
                 $pluginsNew[$class] = $plugin;
-                [$newMethods, $newHandlers] = $plugin->internalStart($MadelineProto, $pluginsPrev, $pluginsNew, false) ?? [];
+                [$newMethods, $newHandlers] = $plugin->internalStart($MadelineProto, $pluginsPrev, $pluginsNew, false) ?? [[], []];
                 if (!$plugin->isPluginEnabled()) {
                     unset($pluginsNew[$class]);
                     continue;
@@ -510,7 +510,7 @@ abstract class EventHandler extends AbstractAPI
                 $pathNew = realpath(\dirname((new ReflectionClass($class))->getFileName()).DIRECTORY_SEPARATOR.$path);
                 if ($pathNew === false) {
                     unset($paths[$k]);
-                    Logger::log(sprintf(Lang::$current_lang['plugin_path_does_not_exist'], $path), Logger::FATAL_ERROR);
+                    Logger::log(\sprintf(Lang::$current_lang['plugin_path_does_not_exist'], $path), Logger::FATAL_ERROR);
                     continue;
                 }
             }

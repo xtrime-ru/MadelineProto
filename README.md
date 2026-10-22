@@ -45,6 +45,10 @@ if (!$me['bot']) {
     } catch (\danog\MadelineProto\RPCErrorException $e) {
         $MadelineProto->logger($e);
     }
+
+    // Video call @magicalcrazypony, the MadelineProto video webradio, playing a WebM video (works on webhosts, NO ffmpeg needed!)
+    // See https://docs.madelineproto.xyz/docs/CALLS.html for group calls, livestreams, recording and more.
+    $MadelineProto->requestCall('@magicalcrazypony', video: true)->play(new \danog\MadelineProto\RemoteUrl('https://paste.daniil.it/oncall.webm'));
 }
 $MadelineProto->echo('OK, done!');
 ```
@@ -91,7 +95,9 @@ Some of MadelineProto's core components are also available as separate, standalo
   * [QR code login (user)](https://docs.madelineproto.xyz/docs/LOGIN.html#qr-code-user)
 * [Features](https://docs.madelineproto.xyz/docs/FEATURES.html) - MadelineProto can do everything official clients can do, and more!
 * [Requirements](https://docs.madelineproto.xyz/docs/REQUIREMENTS.html) - MadelineProto requires the mbstring, xml, json, fileinfo, gmp, openssl, iconv, gd extensions to function properly.
-* [MadelineProto on Docker](https://docs.madelineproto.xyz/docs/DOCKER.html) - MadelineProto offers an official MadelineProto docker image for the linux/amd64, linux/arm64 and linux/riscv64 platforms @ hub.madelineproto.xyz/danog/madelineproto.
+* [MadelineProto on Docker](https://docs.madelineproto.xyz/docs/DOCKER.html) - MadelineProto offers an official MadelineProto docker image for the linux/amd64 and linux/arm64 platforms @ hub.madelineproto.xyz/danog/madelineproto.
+  * [Tags](https://docs.madelineproto.xyz/docs/DOCKER.html#tags)
+  * [User and permissions](https://docs.madelineproto.xyz/docs/DOCKER.html#user-and-permissions)
   * [Getting started](https://docs.madelineproto.xyz/docs/DOCKER.html#getting-started)
     * [CLI bot (recommended)](https://docs.madelineproto.xyz/docs/DOCKER.html#cli-bot-recommended)
     * [Databases on docker](https://docs.madelineproto.xyz/docs/DOCKER.html#databases-on-docker)
@@ -286,11 +292,24 @@ Some of MadelineProto's core components are also available as separate, standalo
   * [Getting the TL trace](https://docs.madelineproto.xyz/docs/EXCEPTIONS.html#getting-the-tl-trace)
 * [Avoiding FLOOD_WAITs](https://docs.madelineproto.xyz/docs/FLOOD_WAIT.html) - If you make too many requests to telegram, you might get FLOOD_WAITed for a while. To avoid these flood waits, you must calculate the flood wait rate.
 * [Logging](https://docs.madelineproto.xyz/docs/LOGGING.html) - MadelineProto provides a unified class for logging messages to the logging destination defined in settings.
-* [Telegram VoIP phone calls](https://docs.madelineproto.xyz/docs/CALLS.html) - MadelineProto provides an easy wrapper to work with phone calls.
+* [Telegram voice/video/group calls](https://docs.madelineproto.xyz/docs/CALLS.html) - MadelineProto can make and receive voice and video calls, stream and record video chats and livestreams, and take part in end-to-end encrypted conference calls.
+  * [Call types](https://docs.madelineproto.xyz/docs/CALLS.html#call-types)
   * [Requesting a call](https://docs.madelineproto.xyz/docs/CALLS.html#requesting-a-call)
-  * [Playing audio files](https://docs.madelineproto.xyz/docs/CALLS.html#playing-audio-files)
-    * [Webhost support!](https://docs.madelineproto.xyz/docs/CALLS.html#webhost-support)
   * [Accepting calls](https://docs.madelineproto.xyz/docs/CALLS.html#accepting-calls)
+  * [Playing video files](https://docs.madelineproto.xyz/docs/CALLS.html#playing-video-files)
+  * [Playing audio files](https://docs.madelineproto.xyz/docs/CALLS.html#playing-audio-files)
+  * [Supported formats](https://docs.madelineproto.xyz/docs/CALLS.html#supported-formats)
+  * [Playlists and screen sharing](https://docs.madelineproto.xyz/docs/CALLS.html#playlists-and-screen-sharing)
+  * [Recording calls](https://docs.madelineproto.xyz/docs/CALLS.html#recording-calls)
+  * [Group calls (video chats and livestreams)](https://docs.madelineproto.xyz/docs/CALLS.html#group-calls-video-chats-and-livestreams)
+    * [Livestreams, RTMP and stream mode](https://docs.madelineproto.xyz/docs/CALLS.html#livestreams-rtmp-and-stream-mode)
+    * [Live stories](https://docs.madelineproto.xyz/docs/CALLS.html#live-stories)
+  * [Conference calls](https://docs.madelineproto.xyz/docs/CALLS.html#conference-calls)
+  * [Restarts](https://docs.madelineproto.xyz/docs/CALLS.html#restarts)
+  * [PrivateCall](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Calls/PrivateCall.html): a one-to-one voice or video call (`danog\MadelineProto\VoIP` is an alias kept for backwards compatibility)
+  * [GroupCall](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Calls/GroupCall.html)
+  * [LiveStory](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Calls/LiveStory.html)
+  * [ConferenceCall](https://docs.madelineproto.xyz/PHP/danog/MadelineProto/EventHandler/Calls/ConferenceCall.html)
 * [Uploading and downloading files](https://docs.madelineproto.xyz/docs/FILES.html) - MadelineProto provides fully parallelized wrapper methods to upload and download files that support bot API file ids, direct upload by URL and file renaming.
   * [Bot API file IDs](https://docs.madelineproto.xyz/docs/FILES.html#bot-api-file-ids)
   * [Uploading & sending files](https://docs.madelineproto.xyz/docs/FILES.html#sending-files)
@@ -983,7 +1002,6 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/chatlists.checkChatlistInvite.html" name="chatlists.checkChatlistInvite">Obtain information about a chat folder deep link »: chatlists.checkChatlistInvite</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getBotApp.html" name="messages.getBotApp">Obtain information about a direct link Mini App: messages.getBotApp</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getSavedDialogsByID.html" name="messages.getSavedDialogsByID">Obtain information about specific saved message dialogs » or monoforum topics »: messages.getSavedDialogsByID</a>
-    * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#getWebAPITemplate" name="getWebAPITemplate">Obtain the API ID UI template: getWebAPITemplate</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.getAllReadPeerStories.html" name="stories.getAllReadPeerStories">Obtain the latest read story ID for all peers when first logging in, returned as a list of updateReadStories updates, see here » for more info: stories.getAllReadPeerStories</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.getStoryViewsList.html" name="stories.getStoryViewsList">Obtain the list of users that have viewed a specific story we posted: stories.getStoryViewsList</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.importContactToken.html" name="contacts.importContactToken">Obtain user info from a temporary profile link: contacts.importContactToken</a>
@@ -1074,7 +1092,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getEmojiStatusGroups.html" name="messages.getEmojiStatusGroups">Represents a list of emoji categories, to be used when selecting custom emojis to set as custom emoji status: messages.getEmojiStatusGroups</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getEmojiProfilePhotoGroups.html" name="messages.getEmojiProfilePhotoGroups">Represents a list of emoji categories, to be used when selecting custom emojis to set as profile picture: messages.getEmojiProfilePhotoGroups</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getEmojiGroups.html" name="messages.getEmojiGroups">Represents a list of emoji categories: messages.getEmojiGroups</a>
-    * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#requestCall" name="requestCall">Request VoIP call: requestCall</a>
+    * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#requestCall" name="requestCall">Request a one-to-one voice or video call: requestCall</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.requestFirebaseSms.html" name="auth.requestFirebaseSms">Request an SMS code via Firebase: auth.requestFirebaseSms</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.requestPasswordRecovery.html" name="auth.requestPasswordRecovery">Request recovery code of a 2FA password, only for accounts with a recovery email configured: auth.requestPasswordRecovery</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#requestSecretChat" name="requestSecretChat">Request secret chat: requestSecretChat</a>
@@ -1191,7 +1209,6 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#setReportPeers" name="setReportPeers">Set peer(s) where to send errors occurred in the event loop: setReportPeers</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/account.setContentSettings.html" name="account.setContentSettings">Set sensitive content settings (for viewing or hiding NSFW content): account.setContentSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stickers.setStickerSetThumb.html" name="stickers.setStickerSetThumb">Set stickerset thumbnail: stickers.setStickerSetThumb</a>
-    * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#setWebApiTemplate" name="setWebApiTemplate">Set the API ID UI template: setWebApiTemplate</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.setBotCallbackAnswer.html" name="messages.setBotCallbackAnswer">Set the callback answer to a user button press (bots only): messages.setBotCallbackAnswer</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.saveDefaultGroupCallJoinAs.html" name="phone.saveDefaultGroupCallJoinAs">Set the default peer that will be used to join a group call in a specific dialog: phone.saveDefaultGroupCallJoinAs</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.setBotBroadcastDefaultAdminRights.html" name="bots.setBotBroadcastDefaultAdminRights">Set the default suggested admin rights for bots being added as admins to channels, see here for more info on how to handle them »: bots.setBotBroadcastDefaultAdminRights</a>
@@ -1327,6 +1344,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.getTones.html" name="aicompose.getTones">aicompose.getTones</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.saveTone.html" name="aicompose.saveTone">aicompose.saveTone</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/aicompose.updateTone.html" name="aicompose.updateTone">aicompose.updateTone</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.cancelWebTokenAuthorization.html" name="auth.cancelWebTokenAuthorization">auth.cancelWebTokenAuthorization</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.checkPaidAuth.html" name="auth.checkPaidAuth">auth.checkPaidAuth</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.finishFirebasePnvLogin.html" name="auth.finishFirebasePnvLogin">auth.finishFirebasePnvLogin</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.finishPasskeyLogin.html" name="auth.finishPasskeyLogin">auth.finishPasskeyLogin</a>
@@ -1334,12 +1352,14 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.initFirebasePnvLogin.html" name="auth.initFirebasePnvLogin">auth.initFirebasePnvLogin</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/auth.initPasskeyLogin.html" name="auth.initPasskeyLogin">auth.initPasskeyLogin</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#base64urlDecode" name="base64urlDecode">base64URL decode: base64urlDecode</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.addUsername.html" name="bots.addUsername">bots.addUsername</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.checkUsername.html" name="bots.checkUsername">bots.checkUsername</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.createBot.html" name="bots.createBot">bots.createBot</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.editAccessSettings.html" name="bots.editAccessSettings">bots.editAccessSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.exportBotToken.html" name="bots.exportBotToken">bots.exportBotToken</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getAccessSettings.html" name="bots.getAccessSettings">bots.getAccessSettings</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.getRequestedWebViewButton.html" name="bots.getRequestedWebViewButton">bots.getRequestedWebViewButton</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.removeUsername.html" name="bots.removeUsername">bots.removeUsername</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.requestWebViewButton.html" name="bots.requestWebViewButton">bots.requestWebViewButton</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/bots.setJoinChatResults.html" name="bots.setJoinChatResults">bots.setJoinChatResults</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/communities.create.html" name="communities.create">communities.create</a>
@@ -1351,6 +1371,8 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/communities.toggleParticipantBanned.html" name="communities.toggleParticipantBanned">communities.toggleParticipantBanned</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/communities.togglePeerLink.html" name="communities.togglePeerLink">communities.togglePeerLink</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/communities.togglePeerLinkRequestApproval.html" name="communities.togglePeerLinkRequestApproval">communities.togglePeerLinkRequestApproval</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.exportNoPaidMessagesToken.html" name="contacts.exportNoPaidMessagesToken">contacts.exportNoPaidMessagesToken</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.importNoPaidMessagesToken.html" name="contacts.importNoPaidMessagesToken">contacts.importNoPaidMessagesToken</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/contacts.updateContactNote.html" name="contacts.updateContactNote">contacts.updateContactNote</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/ephemeral.deleteAllWelcomeMessages.html" name="ephemeral.deleteAllWelcomeMessages">ephemeral.deleteAllWelcomeMessages</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/ephemeral.deleteMessage.html" name="ephemeral.deleteMessage">ephemeral.deleteMessage</a>
@@ -1379,6 +1401,7 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getFutureChatCreatorAfterLeave.html" name="messages.getFutureChatCreatorAfterLeave">messages.getFutureChatCreatorAfterLeave</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getPersonalChannelHistory.html" name="messages.getPersonalChannelHistory">messages.getPersonalChannelHistory</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getRichMessage.html" name="messages.getRichMessage">messages.getRichMessage</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getShareThemeBackdrops.html" name="messages.getShareThemeBackdrops">messages.getShareThemeBackdrops</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.getUnreadPollVotes.html" name="messages.getUnreadPollVotes">messages.getUnreadPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.readPollVotes.html" name="messages.readPollVotes">messages.readPollVotes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reorderPinnedForumTopics.html" name="messages.reorderPinnedForumTopics">messages.reorderPinnedForumTopics</a>
@@ -1386,19 +1409,31 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.reportReadMetrics.html" name="messages.reportReadMetrics">messages.reportReadMetrics</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.requestChatJoinWebView.html" name="messages.requestChatJoinWebView">messages.requestChatJoinWebView</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.setBotGuestChatResult.html" name="messages.setBotGuestChatResult">messages.setBotGuestChatResult</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.setShareTheme.html" name="messages.setShareTheme">messages.setShareTheme</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.summarizeText.html" name="messages.summarizeText">messages.summarizeText</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.translateRichMessage.html" name="messages.translateRichMessage">messages.translateRichMessage</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/messages.updatePinnedForumTopic.html" name="messages.updatePinnedForumTopic">messages.updatePinnedForumTopic</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#rleDecode" name="rleDecode">null-byte RLE decode: rleDecode</a>
     * <a href="https://docs.madelineproto.xyz/PHP/danog/MadelineProto/API.html#rleEncode" name="rleEncode">null-byte RLE encode: rleEncode</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.craftStarGift.html" name="payments.craftStarGift">payments.craftStarGift</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.createOnrampSession.html" name="payments.createOnrampSession">payments.createOnrampSession</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.deleteStarGift.html" name="payments.deleteStarGift">payments.deleteStarGift</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.depositStarGift.html" name="payments.depositStarGift">payments.depositStarGift</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.displayStarGift.html" name="payments.displayStarGift">payments.displayStarGift</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getCraftStarGifts.html" name="payments.getCraftStarGifts">payments.getCraftStarGifts</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getCurrencyRates.html" name="payments.getCurrencyRates">payments.getCurrencyRates</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getOnrampAvailability.html" name="payments.getOnrampAvailability">payments.getOnrampAvailability</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getOnrampBaseCurrencies.html" name="payments.getOnrampBaseCurrencies">payments.getOnrampBaseCurrencies</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getOnrampLimits.html" name="payments.getOnrampLimits">payments.getOnrampLimits</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getOnrampProviders.html" name="payments.getOnrampProviders">payments.getOnrampProviders</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getOnrampQuote.html" name="payments.getOnrampQuote">payments.getOnrampQuote</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftActiveAuctions.html" name="payments.getStarGiftActiveAuctions">payments.getStarGiftActiveAuctions</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftAuctionAcquiredGifts.html" name="payments.getStarGiftAuctionAcquiredGifts">payments.getStarGiftAuctionAcquiredGifts</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftAuctionState.html" name="payments.getStarGiftAuctionState">payments.getStarGiftAuctionState</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.getStarGiftUpgradeAttributes.html" name="payments.getStarGiftUpgradeAttributes">payments.getStarGiftUpgradeAttributes</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.resolveStarGiftOffer.html" name="payments.resolveStarGiftOffer">payments.resolveStarGiftOffer</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.sendStarGiftOffer.html" name="payments.sendStarGiftOffer">payments.sendStarGiftOffer</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/payments.withdrawStarGift.html" name="payments.withdrawStarGift">payments.withdrawStarGift</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.deleteGroupCallMessages.html" name="phone.deleteGroupCallMessages">phone.deleteGroupCallMessages</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.deleteGroupCallParticipantMessages.html" name="phone.deleteGroupCallParticipantMessages">phone.deleteGroupCallParticipantMessages</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.getGroupCallStars.html" name="phone.getGroupCallStars">phone.getGroupCallStars</a>
@@ -1407,7 +1442,35 @@ Some of MadelineProto's core components are also available as separate, standalo
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/phone.sendGroupCallMessage.html" name="phone.sendGroupCallMessage">phone.sendGroupCallMessage</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stats.getPollStats.html" name="stats.getPollStats">stats.getPollStats</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/stories.startLive.html" name="stories.startLive">stories.startLive</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/toncenter.getStreamingUrl.html" name="toncenter.getStreamingUrl">toncenter.getStreamingUrl</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/toncenter.performApiRequest.html" name="toncenter.performApiRequest">toncenter.performApiRequest</a>
     * <a href="https://docs.madelineproto.xyz/API_docs/methods/users.suggestBirthday.html" name="users.suggestBirthday">users.suggestBirthday</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.disableBackup.html" name="wallet.disableBackup">wallet.disableBackup</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.enableBackup.html" name="wallet.enableBackup">wallet.enableBackup</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.exportSecretPhrase.html" name="wallet.exportSecretPhrase">wallet.exportSecretPhrase</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.fetchEncryptedSecretPhrasePart.html" name="wallet.fetchEncryptedSecretPhrasePart">wallet.fetchEncryptedSecretPhrasePart</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getBackupHolderDcs.html" name="wallet.getBackupHolderDcs">wallet.getBackupHolderDcs</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getExistingWaltBalance.html" name="wallet.getExistingWaltBalance">wallet.getExistingWaltBalance</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getGaslessInfo.html" name="wallet.getGaslessInfo">wallet.getGaslessInfo</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getNfts.html" name="wallet.getNfts">wallet.getNfts</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getProofChallenge.html" name="wallet.getProofChallenge">wallet.getProofChallenge</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getState.html" name="wallet.getState">wallet.getState</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getTransactions.html" name="wallet.getTransactions">wallet.getTransactions</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getTransactionsByIDs.html" name="wallet.getTransactionsByIDs">wallet.getTransactionsByIDs</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getTransactionsByMsgHash.html" name="wallet.getTransactionsByMsgHash">wallet.getTransactionsByMsgHash</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.getUserAddresses.html" name="wallet.getUserAddresses">wallet.getUserAddresses</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.replaceWallet.html" name="wallet.replaceWallet">wallet.replaceWallet</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.sendTransfer.html" name="wallet.sendTransfer">wallet.sendTransfer</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.setCardStickers.html" name="wallet.setCardStickers">wallet.setCardStickers</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectClaimRequest.html" name="wallet.tonConnectClaimRequest">wallet.tonConnectClaimRequest</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectCloseSession.html" name="wallet.tonConnectCloseSession">wallet.tonConnectCloseSession</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectCreateSession.html" name="wallet.tonConnectCreateSession">wallet.tonConnectCreateSession</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectGetPending.html" name="wallet.tonConnectGetPending">wallet.tonConnectGetPending</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectGetSessions.html" name="wallet.tonConnectGetSessions">wallet.tonConnectGetSessions</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectNextEventId.html" name="wallet.tonConnectNextEventId">wallet.tonConnectNextEventId</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectRegisterKey.html" name="wallet.tonConnectRegisterKey">wallet.tonConnectRegisterKey</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectSubmitConnectResult.html" name="wallet.tonConnectSubmitConnectResult">wallet.tonConnectSubmitConnectResult</a>
+    * <a href="https://docs.madelineproto.xyz/API_docs/methods/wallet.tonConnectSubmitResponse.html" name="wallet.tonConnectSubmitResponse">wallet.tonConnectSubmitResponse</a>
 * [Contributing](https://docs.madelineproto.xyz/docs/CONTRIB.html) - You can contribute in various ways.
   * [Translation](https://docs.madelineproto.xyz/docs/CONTRIB.html#translation)
   * [Contribution guide](https://docs.madelineproto.xyz/docs/CONTRIB.html#contribution-guide)

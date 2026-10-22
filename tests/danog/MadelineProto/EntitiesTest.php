@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\Test;
 
+use AssertionError;
 use danog\MadelineProto\EventHandler\Message\Entities\BankCard;
 use danog\MadelineProto\EventHandler\Message\Entities\Blockquote;
 use danog\MadelineProto\EventHandler\Message\Entities\Bold;
@@ -12,6 +13,7 @@ use danog\MadelineProto\EventHandler\Message\Entities\Cashtag;
 use danog\MadelineProto\EventHandler\Message\Entities\Code;
 use danog\MadelineProto\EventHandler\Message\Entities\CustomEmoji;
 use danog\MadelineProto\EventHandler\Message\Entities\Email;
+use danog\MadelineProto\EventHandler\Message\Entities\FormattedDate;
 use danog\MadelineProto\EventHandler\Message\Entities\Hashtag;
 use danog\MadelineProto\EventHandler\Message\Entities\Italic;
 use danog\MadelineProto\EventHandler\Message\Entities\Mention;
@@ -23,6 +25,7 @@ use danog\MadelineProto\EventHandler\Message\Entities\Spoiler;
 use danog\MadelineProto\EventHandler\Message\Entities\Strike;
 use danog\MadelineProto\EventHandler\Message\Entities\TextUrl;
 use danog\MadelineProto\EventHandler\Message\Entities\Underline;
+use danog\MadelineProto\EventHandler\Message\Entities\Unknown;
 use danog\MadelineProto\EventHandler\Message\Entities\Url;
 use danog\MadelineProto\StrTools;
 use danog\MadelineProto\TextEntities;
@@ -62,12 +65,17 @@ class EntitiesTest extends TestCase
         return [
             [new BankCard(1, 2)],
             [new Blockquote(1, 2)],
+            [new Blockquote(1, 2, true)],
             [new Bold(1, 2)],
             [new BotCommand(1, 2)],
             [new Cashtag(1, 2)],
             [new Code(1, 2)],
             [new CustomEmoji(1, 2, 12345)],
             [new Email(1, 2)],
+            [new FormattedDate(1, 2, 1647531900)],
+            [new FormattedDate(1, 2, 1647531900, relative: true)],
+            [new FormattedDate(1, 2, 1647531900, shortTime: true, shortDate: true)],
+            [new FormattedDate(1, 2, 1647531900, longTime: true, longDate: true, dayOfWeek: true)],
             [new Hashtag(1, 2)],
             [new Italic(1, 2)],
             [new MentionName(1, 2, 12345)],
@@ -80,6 +88,57 @@ class EntitiesTest extends TestCase
             [new Underline(1, 2)],
             [new Url(1, 2)],
         ];
+    }
+    public function testFormattedDate(): void
+    {
+        // From an updateEditChannelMessage that used to fail wrapping with "Unknown entity type: messageEntityFormattedDate"
+        $message = "@magicalcrazypony [783732906] ha usato una parola bandita. \nAzione: Mutato 🔇 fino al 18/\u{2063}10/\u{2063}26 15:31\n\n~ Utente smutato";
+        $entities = MessageEntity::fromRawEntities([
+            ['_' => 'messageEntityMentionName', 'offset' => 0, 'length' => 17, 'user_id' => 783732906],
+            ['_' => 'messageEntityCode', 'offset' => 19, 'length' => 9],
+            ['_' => 'messageEntityBold', 'offset' => 60, 'length' => 7],
+            ['_' => 'messageEntityFormattedDate', 'relative' => false, 'short_time' => true, 'long_time' => false, 'short_date' => true, 'long_date' => false, 'day_of_week' => false, 'offset' => 86, 'length' => 16, 'date' => 1792330294],
+            ['_' => 'messageEntityBold', 'offset' => 106, 'length' => 14],
+        ]);
+        $this->assertEquals(new FormattedDate(86, 16, 1792330294, shortTime: true, shortDate: true), $entities[3]);
+        $this->assertSame(['type' => 'date_time', 'offset' => 86, 'length' => 16, 'unix_time' => 1792330294, 'date_time_format' => 'dt'], $entities[3]->toBotAPI());
+        $this->assertSame("18/\u{2063}10/\u{2063}26 15:31", StrTools::mbSubstr($message, 86, 16));
+        $this->assertStringContainsString(" fino al 18/\u{2063}10/\u{2063}26 15:31<br>", StrTools::entitiesToHtml($message, $entities));
+
+        $this->assertEquals(new FormattedDate(0, 1, 1, dayOfWeek: true, longDate: true, longTime: true), MessageEntity::fromRawEntity(['type' => 'date_time', 'offset' => 0, 'length' => 1, 'unix_time' => 1, 'date_time_format' => 'wDT']));
+        $this->expectException(AssertionError::class);
+        MessageEntity::fromRawEntity(['type' => 'date_time', 'offset' => 0, 'length' => 1, 'unix_time' => 1, 'date_time_format' => 'x']);
+    }
+    public function testUnknownEntities(): void
+    {
+        $this->assertEquals(new Unknown(1, 2), MessageEntity::fromRawEntity(['_' => 'messageEntityUnknown', 'offset' => 1, 'length' => 2]));
+        $this->assertEquals(new Unknown(1, 2), MessageEntity::fromRawEntity((new Unknown(1, 2))->toBotAPI()));
+
+        // Entity types from newer layers are kept as-is instead of failing to wrap the message
+        $raw = ['_' => 'messageEntityDiffReplace', 'offset' => 1, 'length' => 2, 'old_text' => 'test'];
+        $entity = MessageEntity::fromRawEntity($raw);
+        $this->assertEquals(new Unknown(1, 2, $raw), $entity);
+        $this->assertSame($raw, $entity->toMTProto());
+        $this->assertSame(['type' => 'unknown', 'offset' => 1, 'length' => 2], $entity->toBotAPI());
+        $this->assertSame('a<b>b</b>cd', StrTools::entitiesToHtml('abcd', [['_' => 'messageEntityBold', 'offset' => 1, 'length' => 1], $raw]));
+
+        // Anything that isn't an entity still throws
+        $this->expectException(AssertionError::class);
+        MessageEntity::fromRawEntity(['_' => 'messageMediaEmpty']);
+    }
+    public function testExpandableBlockquote(): void
+    {
+        $html = TextEntities::fromHtml('<blockquote expandable>quote</blockquote>');
+        $this->assertEquals([new Blockquote(0, 5, true)], $html->entities);
+        $this->assertSame(['_' => 'messageEntityBlockquote', 'collapsed' => true, 'offset' => 0, 'length' => 5], $html->entities[0]->toMTProto());
+        $this->assertSame('<blockquote expandable>quote</blockquote>', StrTools::entitiesToHtml($html->message, $html->entities, true));
+
+        $markdown = TextEntities::fromMarkdown("**>quote||");
+        $this->assertEquals([new Blockquote(0, 5, true)], $markdown->entities);
+
+        $this->assertEquals(new Blockquote(0, 5), MessageEntity::fromRawEntity(['_' => 'messageEntityBlockquote', 'collapsed' => false, 'offset' => 0, 'length' => 5]));
+        $this->assertEquals(new Blockquote(0, 5), MessageEntity::fromRawEntity(['type' => 'block_quote', 'offset' => 0, 'length' => 5]));
+        $this->assertEquals(new BankCard(0, 5), MessageEntity::fromRawEntity(['type' => 'bank_card', 'offset' => 0, 'length' => 5]));
     }
     private static function sendMessage(string $message, string $parse_mode): TextEntities
     {
@@ -109,7 +168,7 @@ class EntitiesTest extends TestCase
         $this->assertEquals($entities, $result['entities']);
         if (strtolower($mode) === 'html') {
             $this->assertEquals(
-                str_replace(['<br/>', ' </b>', 'mention:'], ['<br>', '</b> ', 'tg://user?id='], $htmlReverse ?? $html),
+                str_replace(['<br/>', 'mention:'], ['<br>', 'tg://user?id='], $htmlReverse ?? $html),
                 StrTools::entitiesToHtml(
                     $resultMTProto->message,
                     $resultMTProto->entities,
@@ -214,7 +273,7 @@ class EntitiesTest extends TestCase
                 [
                     [
                         'offset' => 6,
-                        'length' => 4,
+                        'length' => 5,
                         'type' => 'bold',
                     ],
                 ],
@@ -288,7 +347,7 @@ class EntitiesTest extends TestCase
                     [
                         'offset' => 49,
                         'length' => 10,
-                        'type' => 'block_quote',
+                        'type' => 'blockquote',
                     ],
                     [
                         'offset' => 127,
@@ -296,7 +355,7 @@ class EntitiesTest extends TestCase
                         'type' => 'spoiler',
                     ],
                 ],
-                '<b>test</b><br><i>test</i> <code>test</code> <pre language="html">test</pre> <a href="https://example.com/">test</a> <s>strikethrough</s> <u>underline</u> <blockquote>blockquote</blockquote> https://google.com daniil@daniil.it +39398172758722 @daniilgentili <tg-spoiler>spoiler</tg-spoiler> &lt;b&gt;not_bold&lt;/b&gt;',
+                '<b>test</b><br><i>test</i> <code>test</code> <pre><code class="language-html">test</code></pre> <a href="https://example.com/">test</a> <s>strikethrough</s> <u>underline</u> <blockquote>blockquote</blockquote> https://google.com daniil@daniil.it +39398172758722 @daniilgentili <tg-spoiler>spoiler</tg-spoiler> &lt;b&gt;not_bold&lt;/b&gt;',
             ],
             [
                 'markdown',
@@ -427,7 +486,7 @@ class EntitiesTest extends TestCase
                 [
                     [
                         'offset' => 0,
-                        'length' => 4,
+                        'length' => 5,
                         'type' => 'text_link',
                         'url' => 'https://google.com/',
                     ],
@@ -511,12 +570,11 @@ class EntitiesTest extends TestCase
                 [
                     [
                         'offset' => 0,
-                        'length' => 4,
+                        'length' => 5,
                         'type' => 'text_link',
                         'url' => 'https://google.com/',
                     ],
                 ],
-                '<a href="https://google.com/">link</a> test',
             ],
             [
                 'html',

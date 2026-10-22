@@ -99,7 +99,8 @@ interface Call extends Stringable
     /**
      * Play a file, transmitting its audio and, if it carries a transmittable one, its video.
      *
-     * A WebM/Matroska file with VP8, VP9, H.264 or AV1 video has its video transmitted too; any other
+     * A WebM/Matroska file with VP8, VP9, H.264 or H.265 video (or AV1, in a one-to-one call with an app
+     * that supports it) has its video transmitted too; any other
      * file (or a raw audio stream) is played as audio only. Frames are demuxed in pure PHP and sent
      * as-is where possible, so no transcoding (and thus no FFI extension) is required for pre-encoded
      * WebM/OGG-OPUS input. `$dest` selects the camera or the presentation (screencast) stream.
@@ -124,6 +125,8 @@ interface Call extends Stringable
 
     /**
      * Set the files to play, on loop, while the given stream's main playlist is empty.
+     *
+     * A hold file being played is replaced right away by the new ones (or stopped, if none are passed).
      *
      * @psalm-impure
      */

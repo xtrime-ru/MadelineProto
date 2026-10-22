@@ -63,11 +63,23 @@ final class StreamReceiver
     /** Header signature of a unified (RTMP) chunk, which is followed by a container name and events. */
     private const UNIFIED_SIGNATURE = 0xa12e810d;
     private const RETRY_MS = 100;
+    /** How long to wait before fetching the stream channels again when they have no usable timestamp, in seconds. */
+    private const CHANNELS_RETRY = 1.0;
+    /** How many audio-only chunks of an RTMP stream are held, waiting for its video, before recording only its audio. */
+    private const MAX_AUDIO_ONLY_CHUNKS = 10;
 
     private bool $running = false;
     private bool $rtmp = false;
     private int $generation = 0;
     private ?int $nextTimestamp = null;
+    /** The timestamp of the last chunk consumed: a resynchronization never goes back to it. */
+    private ?int $lastTimestamp = null;
+    /**
+     * @var list<array{list<array{track: int, codec: string, type: int, data: string, timestamp: int, keyframe: bool}>, array<int, array<string, mixed>>, int}>
+     *      The first chunks of an RTMP stream, without video, held until the recording is opened:
+     *      their frames, tracks and timestamp.
+     */
+    private array $audioOnlyChunks = [];
 
     private LocalFile|WritableStream|null $outputFile = null;
     /** Directory to record into (folder mode), if any. */
@@ -98,6 +110,8 @@ final class StreamReceiver
      */
     private array $videoWriters = [];
     private bool $unsupportedLogged = false;
+    /** The current interval between fetches of the stream channels, see loop(). */
+    private float $channelsRetry = self::CHANNELS_RETRY;
 
     /**
      * @psalm-mutation-free
@@ -175,13 +189,41 @@ final class StreamReceiver
     {
         while ($this->running && $generation === $this->generation) {
             if ($this->nextTimestamp === null) {
-                $this->nextTimestamp = $this->liveEdge();
+                try {
+                    $edge = $this->liveEdge();
+                } catch (RateLimitError $e) {
+                    // Polled faster than the server allows (FLOOD_WAIT_3 while the livestream has no media): wait
+                    // as long as it asks, and poll at that pace from now on, until the stream starts.
+                    $this->channelsRetry = max($this->channelsRetry, (float) $e->getWaitTime());
+                    $this->call->log("Waiting {$e->getWaitTime()} seconds to fetch the stream channels of {$this->call} again", Logger::ULTRA_VERBOSE);
+                    delay((float) $e->getWaitTime());
+                    continue;
+                } catch (Throwable $e) {
+                    $this->call->log("Could not fetch the stream channels of {$this->call}: $e", Logger::WARNING);
+                    $edge = null;
+                }
+                if ($edge === null) {
+                    // No usable timestamp yet: the channels are empty while the publisher of the livestream sends
+                    // no media, see https://core.telegram.org/api/group-calls (tgcalls retries after a second).
+                    delay($this->channelsRetry);
+                    continue;
+                }
+                $this->channelsRetry = self::CHANNELS_RETRY;
+                // The live edge may not have moved since the last chunk (e.g. a resynchronization
+                // after the next chunk was not ready yet): never consume a chunk twice, unless the
+                // edge is far behind it (the timeline restarted).
+                if ($this->lastTimestamp !== null && $edge <= $this->lastTimestamp && $this->lastTimestamp - $edge <= self::BUFFER_MS + 2 * self::SEGMENT_MS) {
+                    $edge = $this->lastTimestamp + self::SEGMENT_MS;
+                }
+                $this->nextTimestamp = $edge;
             }
             $timestamp = $this->nextTimestamp;
-            // Stay behind the live edge: never ask for a chunk that cannot be complete yet.
+            // Stay behind the live edge: never ask for a chunk that cannot be complete yet. The
+            // timeline of an RTMP stream starts with the stream, not the server clock: its chunks
+            // that are not ready yet fail with TIME_TOO_BIG instead.
             $due = $timestamp + self::SEGMENT_MS + self::BUFFER_MS;
             $now = self::nowMs();
-            if ($due > $now) {
+            if (!$this->rtmp && $due > $now) {
                 delay(($due - $now) / 1000);
                 continue;
             }
@@ -214,7 +256,9 @@ final class StreamReceiver
                 delay(self::RETRY_MS / 1000);
                 continue;
             }
+            $this->call->log("Got the chunk $timestamp of {$this->call} (".\strlen($chunk).' bytes)', Logger::ULTRA_VERBOSE);
             $this->nextTimestamp = $timestamp + self::SEGMENT_MS;
+            $this->lastTimestamp = $timestamp;
             try {
                 $this->consume($chunk, $timestamp);
             } catch (Throwable $e) {
@@ -227,21 +271,29 @@ final class StreamReceiver
     }
 
     /**
-     * The timestamp to start from: the live edge (from phone.getGroupCallStreamChannels where the server
-     * offers it, else our clock) rounded down to a segment boundary, minus the playback buffer.
+     * The timestamp to start from, the live edge rounded down to a segment boundary minus the playback
+     * buffer, see [stream mode](https://core.telegram.org/api/group-calls#stream-mode): of the unified
+     * channel of an RTMP stream (null if it has no chunk yet: ask again in a second), else of the
+     * server clock.
      */
-    private function liveEdge(): int
+    private function liveEdge(): ?int
     {
-        $edge = null;
-        try {
-            foreach ($this->call->API->getGroupCallStreamChannels($this->call->public->id) as $channel) {
-                $edge = max($edge ?? 0, $channel['last_timestamp_ms']);
-            }
-        } catch (Throwable $e) {
-            $this->call->log("Could not fetch the stream channels of {$this->call}, using the local clock: $e", Logger::VERBOSE);
+        if (!$this->rtmp) {
+            return intdiv(self::nowMs(), self::SEGMENT_MS) * self::SEGMENT_MS - self::BUFFER_MS;
         }
-        $edge ??= self::nowMs();
-        return intdiv($edge, self::SEGMENT_MS) * self::SEGMENT_MS - self::BUFFER_MS;
+        $edge = null;
+        foreach ($this->call->API->getGroupCallStreamChannels($this->call->public->id) as $channel) {
+            // The video of an RTMP stream starts a few seconds after its audio, on its unified channel
+            // 1 (sometimes listed twice, with different edges: take the one that is surely ready).
+            if ($channel['channel'] === 1) {
+                $edge = min($edge ?? PHP_INT_MAX, $channel['last_timestamp_ms']);
+            }
+        }
+        if ($edge === null) {
+            return null;
+        }
+        $start = intdiv($edge, self::SEGMENT_MS) * self::SEGMENT_MS - self::BUFFER_MS;
+        return $start > 0 ? $start : null;
     }
 
     /**
@@ -387,7 +439,8 @@ final class StreamReceiver
             $offset += $length + $padding;
             return $value;
         };
-        if ($int() !== self::UNIFIED_SIGNATURE) {
+        // Unsigned: unpack('l') reads the signature as a negative number.
+        if ((($int() ?? 0) & 0xFFFFFFFF) !== self::UNIFIED_SIGNATURE) {
             return null;
         }
         $container = $string();
@@ -452,17 +505,57 @@ final class StreamReceiver
      */
     private function consumeFrames(iterable $frames, array $tracks, int $timestamp): void
     {
+        if ($this->ogg === null && $this->mkv === null && $this->outputFile !== null) {
+            // The recording can't get a video track once opened, and the first chunks of an RTMP
+            // stream often have none: hold them for a while, waiting for the video.
+            if ($this->rtmp && self::videoTrack($tracks) === null && \count($this->audioOnlyChunks) < self::MAX_AUDIO_ONLY_CHUNKS) {
+                $this->audioOnlyChunks[] = [iterator_to_array($frames, false), $tracks, $timestamp];
+                return;
+            }
+            $this->openWriters($tracks);
+            $held = $this->audioOnlyChunks;
+            $this->audioOnlyChunks = [];
+            foreach ($held as [$heldFrames, $heldTracks, $heldTimestamp]) {
+                $this->writeFrames($heldFrames, $heldTracks, $heldTimestamp);
+            }
+        }
+        $this->writeFrames($frames, $tracks, $timestamp);
+    }
+
+    /**
+     * Open the main recording, from the tracks of a chunk.
+     *
+     * @param array<int, array<string, mixed>> $tracks
+     */
+    private function openWriters(array $tracks): void
+    {
+        foreach ($tracks as $track) {
+            if (($track['type'] ?? 0) !== Matroska::TRACK_TYPE_AUDIO) {
+                continue;
+            }
+            $private = isset($track['private']) && \is_string($track['private']) ? $track['private'] : '';
+            if ($track['codec'] === 'A_OPUS') {
+                $this->ensureWriters(str_starts_with($private, 'OpusHead') ? $private : OggDemuxer::opusHead(2), 'A_OPUS', self::videoTrack($tracks));
+            } elseif ($track['codec'] === 'A_AAC' && ($this->outputFormat ?? RecordingFormat::Opus)->isMatroska()) {
+                $this->ensureWriters($private, 'A_AAC', self::videoTrack($tracks), (int) ($track['rate'] ?? 48000), (int) ($track['channels'] ?? 2));
+            }
+            return;
+        }
+    }
+
+    /**
+     * @param iterable<array{track: int, codec: string, type: int, data: string, timestamp: int, keyframe: bool}> $frames
+     * @param array<int, array<string, mixed>> $tracks
+     */
+    private function writeFrames(iterable $frames, array $tracks, int $timestamp): void
+    {
         $chunkBase = null;
         foreach ($frames as $frame) {
             $chunkBase ??= $frame['timestamp'];
-            $track = $tracks[$frame['track']] ?? null;
             if ($frame['type'] === Matroska::TRACK_TYPE_AUDIO) {
                 if ($frame['codec'] === 'A_OPUS') {
-                    $private = isset($track['private']) && \is_string($track['private']) ? $track['private'] : '';
-                    $this->ensureWriters(str_starts_with($private, 'OpusHead') ? $private : OggDemuxer::opusHead(2), 'A_OPUS', self::videoTrack($tracks));
                     $this->writeAudio($frame['data'], OggDemuxer::opusSamples($frame['data']));
                 } elseif ($frame['codec'] === 'A_AAC' && ($this->outputFormat ?? RecordingFormat::Opus)->isMatroska()) {
-                    $this->ensureWriters((string) ($track['private'] ?? ''), 'A_AAC', self::videoTrack($tracks), (int) ($track['rate'] ?? 48000), (int) ($track['channels'] ?? 2));
                     $this->writeAudioAt($frame['data'], $timestamp - ($this->recordingStart ?? $timestamp) + ($frame['timestamp'] - $chunkBase));
                 }
                 continue;
@@ -637,6 +730,7 @@ final class StreamReceiver
         $this->mainHasVideo = false;
         $this->mainCodecs = [];
         $this->recordingStart = null;
+        $this->audioOnlyChunks = [];
         foreach (array_keys($this->videoWriters) as $channel) {
             $this->closeVideoWriter($channel);
         }

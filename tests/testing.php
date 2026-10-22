@@ -1,5 +1,5 @@
 #!/usr/bin/env php
-<?php
+<?php declare(strict_types=1);
 /*
 Copyright 2016-2020 Daniil Gentili
 (https://daniil.it)
@@ -19,11 +19,15 @@ use Amp\ByteStream\ReadableBuffer;
 use danog\MadelineProto\API;
 use danog\MadelineProto\FileCallback;
 use danog\MadelineProto\Logger;
+use danog\MadelineProto\Settings;
 use danog\MadelineProto\Settings\AppInfo;
+use danog\MadelineProto\Settings\RPC;
 use danog\MadelineProto\VoIP;
 use Webmozart\Assert\Assert;
 
+use function Amp\async;
 use function Amp\File\read;
+use function Amp\Future\await;
 
 $loader = false;
 if (getenv('ACTIONS_PHAR')) {
@@ -79,9 +83,14 @@ if ($loader) {
 }
 
 echo 'Loading settings...'.PHP_EOL;
-$settings = (new AppInfo)
-    ->setApiId((int) getenv('API_ID'))
-    ->setApiHash(getenv('API_HASH'));
+$settings = (new Settings)
+    ->setAppInfo(
+        (new AppInfo)
+            ->setApiId((int) getenv('API_ID'))
+            ->setApiHash(getenv('API_HASH'))
+    )
+    // The media are sent concurrently: wait out the flood waits rather than failing.
+    ->setRpc((new RPC)->setFloodTimeout(120));
 
 /*
  * Load MadelineProto
@@ -277,6 +286,8 @@ foreach ($media as &$inputMedia) {
         ? read($inputMedia['file'])
         : $MadelineProto->fileGetContents($inputMedia['url']);
 }
+// Otherwise, iterating on $media again with $inputMedia writes every media into the last one.
+unset($inputMedia);
 
 function eq(string $file, string $contents, string $type, string $subtype): void
 {
@@ -285,7 +296,7 @@ function eq(string $file, string $contents, string $type, string $subtype): void
     }
 }
 
-function sendMedia(API $MadelineProto, array $media, string $message, string $mention, mixed $peer, string $type): void
+function sendMedia(API $MadelineProto, array $media, string $message, int $mention, mixed $peer, string $type): void
 {
     $medias = [
         'base' => $media,
@@ -325,6 +336,45 @@ function sendMedia(API $MadelineProto, array $media, string $message, string $me
     }
 }
 
+function testMedia(API $MadelineProto, array $inputMedia, string $message, int $mention, mixed $peer, string $type): void
+{
+    if ($type !== 'sticker' && $type !== 'voice') {
+        $MadelineProto->logger("Sending multi $type");
+        $MadelineProto->messages->sendMultiMedia(['peer' => $peer, 'multi_media' => [
+            ['_' => 'inputSingleMedia', 'media' => $inputMedia, 'message' => '['.$message.'](mention:'.$mention.')', 'parse_mode' => 'markdown'],
+            ['_' => 'inputSingleMedia', 'media' => $inputMedia, 'message' => '['.$message.'](mention:'.$mention.')', 'parse_mode' => 'markdown'],
+        ]]);
+    }
+
+    sendMedia($MadelineProto, $inputMedia, $message, $mention, $peer, $type);
+
+    $MadelineProto->logger("Uploading $type");
+    $uploaded = $MadelineProto->messages->uploadMedia(['peer' => '@me', 'media' => $inputMedia]);
+
+    $MadelineProto->logger("Downloading $type");
+    $file = $MadelineProto->downloadToDir($uploaded, '/tmp');
+    eq($file, $inputMedia['content'], $type, "upload");
+
+    $MadelineProto->logger("Re-sending $type");
+    $inputMedia['file'] = $uploaded;
+
+    $dl = $MadelineProto->messages->uploadMedia(['peer' => '@me', 'media' => $inputMedia]);
+
+    $MadelineProto->logger("Re-downloading $type");
+    $file = $MadelineProto->downloadToDir($dl, '/tmp');
+    eq($file, $inputMedia['content'], $type, "re-upload");
+}
+
+if (getenv('ACTIONS_FORCE_PREVIOUS') && !getenv('ACTIONS_PHAR')) {
+    // The previous version only creates and uses the session that the new one is tested upgrading: a message
+    // and a photo, sent and downloaded (all of the media are tested with the new version).
+    foreach ($peers as $peer) {
+        $MadelineProto->messages->sendMessage(['peer' => $peer, 'message' => $message]);
+        testMedia($MadelineProto, $media['photo'], $message, $mention, $peer, 'photo');
+    }
+    exit(0);
+}
+
 foreach ($peers as $peer) {
     $sentMessage = $MadelineProto->messages->sendMessage(['peer' => $peer, 'message' => $message, 'entities' => [['_' => 'inputMessageEntityMentionName', 'offset' => 0, 'length' => mb_strlen($message), 'user_id' => $mention]]]);
     $MadelineProto->logger($sentMessage, Logger::NOTICE);
@@ -332,33 +382,11 @@ foreach ($peers as $peer) {
     $sentMessage = $MadelineProto->messages->sendMessage(['peer' => $peer, 'message' => str_repeat('a', 4096*4)]);
     $MadelineProto->logger($sentMessage, \danog\MadelineProto\Logger::NOTICE);
 
-    foreach ($media as $type => $inputMedia) {
-        if ($type !== 'sticker' && $type !== 'voice') {
-            $MadelineProto->logger("Sending multi $type");
-            $MadelineProto->messages->sendMultiMedia(['peer' => $peer, 'multi_media' => [
-                ['_' => 'inputSingleMedia', 'media' => $inputMedia, 'message' => '['.$message.'](mention:'.$mention.')', 'parse_mode' => 'markdown'],
-                ['_' => 'inputSingleMedia', 'media' => $inputMedia, 'message' => '['.$message.'](mention:'.$mention.')', 'parse_mode' => 'markdown'],
-            ]]);
-        }
-
-        sendMedia($MadelineProto, $inputMedia, $message, $mention, $peer, $type);
-
-        $MadelineProto->logger("Uploading $type");
-        $media = $MadelineProto->messages->uploadMedia(['peer' => '@me', 'media' => $inputMedia]);
-
-        $MadelineProto->logger("Downloading $type");
-        $file = $MadelineProto->downloadToDir($media, '/tmp');
-        eq($file, $inputMedia['content'], $type, "upload");
-
-        $MadelineProto->logger("Re-sending $type");
-        $inputMedia['file'] = $media;
-
-        $dl = $MadelineProto->messages->uploadMedia(['peer' => '@me', 'media' => $inputMedia]);
-
-        $MadelineProto->logger("Re-downloading $type");
-        $file = $MadelineProto->downloadToDir($dl, '/tmp');
-        eq($file, $inputMedia['content'], $type, "re-upload");
-    }
+    // The media are independent: tested concurrently, through the IPC worker.
+    await(array_map(
+        static fn (string $type) => async(testMedia(...), $MadelineProto, $media[$type], $message, $mention, $peer, $type),
+        array_keys($media),
+    ));
 }
 
 foreach (json_decode(getenv('TEST_DESTINATION_GROUPS'), true) as $peer) {

@@ -117,6 +117,16 @@ final class Logger
      */
     private ?string $rotateId = null;
     /**
+     * Log rotation loop ID of each log file, by real path.
+     *
+     * @var array<string, string>
+     */
+    private static array $rotations = [];
+    /**
+     * Real path of the log file, in file mode.
+     */
+    private ?string $realPath = null;
+    /**
      * PSR logger.
      */
     private readonly PsrLogger $psr;
@@ -135,6 +145,13 @@ final class Logger
      * @internal
      */
     public const ULTRA_VERBOSE = 5;
+    /**
+     * Maximum length of a log entry, in bytes: longer ones (like exceptions whose message contains a
+     * huge query) only keep their beginning and their end.
+     *
+     * @internal
+     */
+    public const MAX_ENTRY_LENGTH = 64 * 1024;
     /**
      * Verbose logging.
      *
@@ -284,10 +301,17 @@ final class Logger
             }
         } elseif ($this->mode === self::FILE_LOGGER) {
             $stdout = new WritableResourceStream(fopen($this->optional, 'a'));
+            // Only the last logger of a file rotates it: a logger that was replaced (by MTProto::setupLogger) may stay
+            // alive, through the reference cycle with its PSR logger or whoever holds that, and would keep truncating
+            // the file at its own maximum size.
+            $this->realPath = realpath($this->optional) ?: $this->optional;
+            if (isset(self::$rotations[$this->realPath])) {
+                EventLoop::cancel(self::$rotations[$this->realPath]);
+                unset(self::$rotations[$this->realPath]);
+            }
             if ($maxSize !== -1) {
                 $optional = $this->optional;
-                $stdout = $stdout;
-                $this->rotateId = EventLoop::repeat(
+                $this->rotateId = self::$rotations[$this->realPath] = EventLoop::repeat(
                     10,
                     static function () use ($maxSize, $optional, $stdout): void {
                         clearstatcache(true, $optional);
@@ -300,7 +324,7 @@ final class Logger
                 EventLoop::unreference($this->rotateId);
             }
         } elseif ($this->mode === self::DEFAULT_LOGGER) {
-            $result = @\ini_get('error_log');
+            $result = \ini_get('error_log');
             if ($result === 'syslog') {
                 $stdout = getStderr();
             } elseif ($result) {
@@ -349,7 +373,7 @@ final class Logger
 
             $this->colors[self::NOTICE] = implode(';', [self::FOREGROUND['light_gray'], self::SET['bold'], self::BACKGROUND['blue']]);
             if (Lang::$currentPercentage !== 100) {
-                $this->logger(sprintf(Lang::$current_lang['translate_madelineproto_cli'], Lang::$currentPercentage));
+                $this->logger(\sprintf(Lang::$current_lang['translate_madelineproto_cli'], Lang::$currentPercentage));
             }
             $this->colors[self::NOTICE] = implode(';', [self::FOREGROUND['yellow'], self::SET['bold']]);
         }
@@ -381,6 +405,9 @@ final class Logger
     {
         if ($this->rotateId) {
             EventLoop::cancel($this->rotateId);
+            if ($this->realPath !== null && (self::$rotations[$this->realPath] ?? null) === $this->rotateId) {
+                unset(self::$rotations[$this->realPath]);
+            }
         }
     }
     /**
@@ -397,6 +424,23 @@ final class Logger
             echo $param.PHP_EOL;
         }
     }
+    /**
+     * Truncate a string longer than the specified length (in bytes), keeping its beginning and its end.
+     *
+     * @internal
+     *
+     * @psalm-pure
+     */
+    public static function truncateEntry(string $string, int $length): string
+    {
+        $omitted = \strlen($string) - $length;
+        if ($omitted <= 0) {
+            return $string;
+        }
+        $half = intdiv($length, 2);
+        return substr($string, 0, $half)."\n[... $omitted bytes omitted ...]\n".substr($string, -$half);
+    }
+
     /**
      * Log a message.
      *
@@ -427,6 +471,7 @@ final class Logger
         } elseif (!\is_string($param)) {
             $param = json_encode($param, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
+        $param = self::truncateEntry($param, self::MAX_ENTRY_LENGTH);
         if (empty($file)) {
             $file = basename(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0]['file'], '.php');
         }
