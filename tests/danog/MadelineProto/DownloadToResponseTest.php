@@ -124,6 +124,24 @@ final class DownloadToResponseTest extends TestCase
         delay(0);
     }
 
+    public function testDisposingResponseStopsBeforeDownloadingWholeFile(): void
+    {
+        $chunks = 0;
+        $downloader = $this->downloader((static function () use (&$chunks): Generator {
+            for ($i = 0; $i < 100; ++$i) {
+                ++$chunks;
+                yield 'abc';
+            }
+        })());
+        $response = $downloader->downloadToResponse(['size' => 300], $this->request());
+        self::assertSame('abc', $response->getBody()->read());
+        unset($response);
+        delay(0); // Let Amp dispose the response body and stop its producer.
+        delay(0);
+        self::assertTrue($downloader->stream->isClosed());
+        self::assertLessThan(100, $chunks);
+    }
+
     public function testClosingResponseClosesDownloadStream(): void
     {
         $downloader = $this->downloader(['abc', 'def']);

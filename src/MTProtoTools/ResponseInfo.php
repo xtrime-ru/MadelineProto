@@ -130,10 +130,14 @@ final class ResponseInfo
         }
         if ($sandbox) {
             // The MIME type and the name come from whoever sent the file on Telegram (or from the query string of the
-            // download script): a file opened as a page can't run scripts nor access the origin serving it, and the
-            // browser must not guess a more dangerous type (see Settings\Files::setSandboxDownloads()).
+            // download script): sandbox documents and prevent the browser from guessing a more dangerous type
+            // (see Settings\Files::setSandboxDownloads()).
             $mime = self::normalizeMime((string) $messageMedia['mime']);
-            $this->headers['Content-Security-Policy'] = 'sandbox';
+            // Native players need the media origin for CORS and scripts for Safari's built-in controls.
+            // https://bugs.webkit.org/show_bug.cgi?id=225865
+            $this->headers['Content-Security-Policy'] = preg_match('~^(video|audio)/~', $mime)
+                ? 'sandbox allow-same-origin allow-scripts'
+                : 'sandbox';
             $this->headers['X-Content-Type-Options'] = 'nosniff';
         } else {
             $mime = (string) $messageMedia['mime'];
