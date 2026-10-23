@@ -32,10 +32,20 @@ final class ResponseInfoTest extends TestCase
 
     public function testEveryFileIsSandboxed(): void
     {
-        foreach (['video/mp4', 'image/jpeg', 'text/html', 'application/octet-stream'] as $mime) {
+        foreach (['image/jpeg', 'image/svg+xml', 'text/plain', 'text/html', 'application/pdf', 'application/octet-stream'] as $mime) {
             $headers = self::headers($mime, 'file', '.bin');
             $this->assertSame('sandbox', $headers['Content-Security-Policy'], $mime);
             $this->assertSame('nosniff', $headers['X-Content-Type-Options'], $mime);
+        }
+    }
+
+    public function testAudioAndVideoSupportNativePlayers(): void
+    {
+        foreach (['video/mp4', 'audio/mpeg', 'Video/MP4; codecs="avc1"'] as $mime) {
+            $headers = self::headers($mime, 'media', '.bin');
+            $this->assertSame('sandbox allow-same-origin allow-scripts', $headers['Content-Security-Policy']);
+            $this->assertSame('nosniff', $headers['X-Content-Type-Options']);
+            $this->assertStringStartsWith('inline', $headers['Content-Disposition']);
         }
     }
 
