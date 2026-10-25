@@ -577,7 +577,7 @@ final class Connection
     public function closeIfIdle(): void
     {
         if ($this->stream && !$this->pendingRequests && !$this->isWriting()
-            && $this->idleSince !== null && hrtime(true) / 1e9 - $this->idleSince >= $this->shared->getSettings()->getTimeout()
+            && $this->idleSince !== null && hrtime(true) / 1e9 - $this->idleSince >= $this->shared->getSettings()->getIdleTimeout()
         ) {
             $this->disconnect(true);
             $this->idleSince = null;

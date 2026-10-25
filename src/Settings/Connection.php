@@ -104,6 +104,12 @@ final class Connection extends SettingsAbstract
      */
     protected float $timeout = 5.0;
     /**
+     * Media and CDN connection idle timeout, in seconds.
+     *
+     * @var positive-int
+     */
+    protected int $idleTimeout = 60;
+    /**
      * Ping interval.
      */
     protected int $pingInterval = 60;
@@ -550,6 +556,30 @@ final class Connection extends SettingsAbstract
     public function setTimeout(float $timeout): self
     {
         $this->timeout = $timeout;
+
+        return $this;
+    }
+
+    /**
+     * Get media and CDN connection idle timeout, in seconds.
+     *
+     * @return positive-int
+     */
+    public function getIdleTimeout(): int
+    {
+        return $this->idleTimeout;
+    }
+
+    /**
+     * Set media and CDN connection idle timeout, in seconds.
+     *
+     * @param positive-int $idleTimeout Idle timeout.
+     *
+     * @psalm-external-mutation-free
+     */
+    public function setIdleTimeout(int $idleTimeout): self
+    {
+        $this->idleTimeout = $idleTimeout;
 
         return $this;
     }
