@@ -140,13 +140,6 @@ final class Connection
      *
      */
     private bool $needsReconnect = false;
-    /** Changes whenever the transport is disconnected, including temporary reconnects. */
-    private int $generation = 0;
-
-    public function getGeneration(): int
-    {
-        return $this->generation;
-    }
     /**
      * Indicate if this socket needs to be reconnected.
      *
@@ -564,63 +557,13 @@ final class Connection
             throw new Exception("reply_to_msg_id is deprecated, please use reply_to or the new sendMessage/sendVideo/etc... methods instead!");
         }
     }
-    /** Number of logical requests awaiting a result, including preparation and retries. */
-    private int $pendingRequests = 0;
-    private ?float $idleSince = null;
-
-    public function requestStarted(): void
-    {
-        $this->pendingRequests++;
-        $this->idleSince = null;
-    }
-
-    public function requestFinished(): void
-    {
-        if (--$this->pendingRequests === 0) {
-            $this->idleSince = hrtime(true) / 1e9;
-        }
-    }
-
-    public function closeIfIdle(): void
-    {
-        if ($this->stream && !$this->pendingRequests && !$this->isWriting()
-            && $this->idleSince !== null && hrtime(true) / 1e9 - $this->idleSince >= $this->shared->getSettings()->getIdleTimeout()
-        ) {
-            $this->disconnect(true);
-            $this->idleSince = null;
-        }
-    }
-
-    public function getPendingRequestCount(): int
-    {
-        return $this->pendingRequests;
-    }
-
     /**
      * Send an MTProto message.
      */
     public function sendMessage(MTProtoOutgoingMessage $message): void
     {
-        // A retry with an assigned message ID and sequence number must stay in its original session.
-        if ($message->specialMethodType === SpecialMethodType::FILE_RELATED && !$message->sessionBound && !$message->hasMsgId()) {
-            $connection = $this->shared->getConnection();
-            if ($connection !== $this) {
-                $connection->sendMessage($message);
-                return;
-            }
-        }
         $message->connection = $this;
         $message->trySend();
-        try {
-            $this->prepareAndSend($message);
-        } catch (\Throwable $e) {
-            $message->reply(static fn (): \Throwable => $e);
-            throw $e;
-        }
-    }
-
-    private function prepareAndSend(MTProtoOutgoingMessage $message): void
-    {
         if (!$message->hasSerializedBody()) {
             $body = $message->getBody();
             if ($message->isMethod) {
@@ -717,7 +660,6 @@ final class Connection
      */
     public function disconnect(bool $temporary = false): void
     {
-        $this->generation++;
         $this->API->logger("Disconnecting from DC {$this->datacenterId}");
         $this->needsReconnect = true;
         if ($this->stream) {

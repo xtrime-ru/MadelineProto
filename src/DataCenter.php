@@ -234,9 +234,9 @@ final class DataCenter
     private function generateContexts(int $dc_number): ContextIterator
     {
         $settings = $this->getSettings();
+        $test = $settings->getTestMode() ? 'test' : 'main';
         $ipv6 = $settings->getIpv6() ? 'ipv6' : 'ipv4';
-        $dcInfo = $this->getDcOption($dc_number, $ipv6);
-        if ($dcInfo === null) {
+        if (!isset($this->API->dcList[$test][$ipv6][$dc_number])) {
             throw new AssertionError("No info for DC $dc_number!");
         }
 
@@ -278,9 +278,9 @@ final class DataCenter
         }
         $combos[] = $default;
 
-        $only = $dcInfo['tcpo_only'];
-        if ($only || isset($dcInfo['secret'])) {
-            $extra = isset($dcInfo['secret']) ? ['secret' => $dcInfo['secret']] : [];
+        $only = $this->API->dcList[$test][$ipv6][$dc_number]['tcpo_only'];
+        if ($only || isset($this->API->dcList[$test][$ipv6][$dc_number]['secret'])) {
+            $extra = isset($this->API->dcList[$test][$ipv6][$dc_number]['secret']) ? ['secret' => $this->API->dcList[$test][$ipv6][$dc_number]['secret']] : [];
             $combo = [[DefaultStream::class, []], [BufferedRawStream::class, []], [ObfuscatedStream::class, $extra], [IntermediatePaddedStream::class, []]];
             if ($only) {
                 array_unshift($combos, $combo);
@@ -356,15 +356,14 @@ final class DataCenter
                     if ($onlyIPv6 !== null && $onlyIPv6 !== $ipv6) {
                         continue;
                     }
-                    $dcInfo = $this->getDcOption($dc_number, $ipv6);
-                    if (!isset($dcInfo['ip_address'])) {
+                    if (!isset($this->API->dcList[$test][$ipv6][$dc_number]['ip_address'])) {
                         continue;
                     }
-                    $address = $dcInfo['ip_address'];
+                    $address = $this->API->dcList[$test][$ipv6][$dc_number]['ip_address'];
                     if ($ipv6 === 'ipv6') {
                         $address = "[$address]";
                     }
-                    $port = $dcInfo['port'];
+                    $port = $this->API->dcList[$test][$ipv6][$dc_number]['port'];
                     foreach (array_unique([$port, 443, 80, 88, 5222]) as $port) {
                         $stream = end($combo)[0];
                         if ($stream === HttpsStream::class) {
@@ -458,32 +457,13 @@ final class DataCenter
         return $this->list[$dc];
     }
     /**
-     * Whether this DC has a configured endpoint, even before its first connection.
-     *
      * @psalm-mutation-free
      */
     public function has(int $dc): bool
     {
-        $ipv6 = $this->getSettings()->getIpv6() ? 'ipv6' : 'ipv4';
-        return $this->getDcOption($dc, $ipv6) !== null;
-    }
-    /**
-     * Prefer media-only endpoints, with regular DC addresses as a fallback.
-     * This also supports media sessions restored from an older configuration.
-     *
-     * @psalm-mutation-free
-     */
-    private function getDcOption(int $dc, string $family): ?array
-    {
         $test = $this->getSettings()->getTestMode() ? 'test' : 'main';
-        $options = $this->API->dcList[$test][$family] ?? [];
-        if (isset($options[$dc])) {
-            return $options[$dc];
-        }
-        if ($dc < 0 && isset($options[-$dc]) && !($options[-$dc]['cdn'] ?? false)) {
-            return $options[-$dc];
-        }
-        return null;
+        $ipv6 = $this->getSettings()->getIpv6() ? 'ipv6' : 'ipv4';
+        return isset($this->API->dcList[$test][$ipv6][$dc]);
     }
     /**
      * Get all DataCenterConnection instances.

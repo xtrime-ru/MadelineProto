@@ -82,7 +82,7 @@ final class DataCenterConnection implements SimpleSubscriber
      */
     private ?ContextIterator $ctx = null;
     /**
-     * Loop to close idle media sockets.
+     * Loop to keep weights at sane value.
      */
     private ?PeriodicLoopInternal $robinLoop = null;
     /**
@@ -209,7 +209,6 @@ final class DataCenterConnection implements SimpleSubscriber
                     $logger->logger('Binding authorization keys...', Logger::VERBOSE);
                     $nonce = Tools::random(8);
                     $expires_at = time() + $expires_in;
-                    $generation = $connection->getGeneration();
                     $temp_auth_key_id = $this->auth->getTempId();
                     $perm_auth_key_id = $this->auth->getID();
                     $temp_session_id = $connection->session_id;
@@ -221,12 +220,6 @@ final class DataCenterConnection implements SimpleSubscriber
                     $padding = Tools::random(Tools::posmod(-\strlen($encrypted_data), 16));
                     [$aes_key, $aes_iv] = $this->auth->pfsKdf($message_key);
                     $encrypted_message = $this->auth->getID().$message_key.Crypt::igeEncrypt($encrypted_data.$padding, $aes_key, $aes_iv);
-                    if ($generation !== $connection->getGeneration() || $connection->shouldReconnect()
-                        || $temp_session_id !== $connection->session_id
-                        || $temp_auth_key_id !== $this->auth->getTempId() || $perm_auth_key_id !== $this->auth->getID()
-                    ) {
-                        continue;
-                    }
                     $res = $connection->methodCallAsyncRead('auth.bindTempAuthKey', ['perm_auth_key_id' => $perm_auth_key_id, 'nonce' => $nonce, 'expires_at' => $expires_at, 'encrypted_message' => $encrypted_message, 'madelineMsgId' => $message_id, 'specialMethodType' => SpecialMethodType::UNAUTHED_METHOD]);
                     if ($res === true) {
                         $logger->logger("Bound temporary and permanent authorization keys, DC {$this->datacenter}", Logger::NOTICE);
@@ -356,7 +349,7 @@ final class DataCenterConnection implements SimpleSubscriber
                 $this->robinLoop = new PeriodicLoopInternal(
                     $this->API,
                     $this->even(...),
-                    "media idle loop DC {$this->datacenter}",
+                    "robin loop DC {$this->datacenter}",
                     $this->API->getSettings()->getConnection()->getRobinPeriod()
                 );
             }
@@ -516,22 +509,6 @@ final class DataCenterConnection implements SimpleSubscriber
         if ($id >= 0) {
             return $this->connections[$id];
         }
-        if ($this->auth->isMedia || $this->auth->isCdn) {
-            $loads = array_map(static fn (Connection $connection): int => $connection->getPendingRequestCount(), $this->connections);
-            $min = min($loads);
-            if ($min > 0 && \count($loads) < $this->API->getSettings()->getConnection()->getMaxMediaSocketCount()) {
-                $this->connectMore(1);
-                return $this->connections[array_key_last($this->connections)];
-            }
-            $key = array_search($min, $loads, true);
-            foreach ($loads as $id => $load) {
-                if ($load === $min && $this->connections[$id]->stream) {
-                    $key = $id;
-                    break;
-                }
-            }
-            return $this->connections[$key];
-        }
         if (\count($this->availableConnections) <= 1) {
             return $this->connections[0];
         }
@@ -542,12 +519,27 @@ final class DataCenterConnection implements SimpleSubscriber
         return $this->connections[$key];
     }
     /**
-     * Close idle media sockets, retaining sessions for lazy reconnection.
+     * Even out round robin values.
      */
     public function even(): void
     {
-        foreach ($this->connections as $connection) {
-            $connection->closeIfIdle();
+        if (!$this->availableConnections) {
+            return;
+        }
+        $min = min($this->availableConnections);
+        if ($min < 50) {
+            foreach ($this->availableConnections as &$count) {
+                $count += 50;
+            }
+        } elseif ($min < 100) {
+            $max = $this->auth->isMedia || $this->auth->isCdn ? $this->API->getSettings()->getConnection()->getMaxMediaSocketCount() : 1;
+            if (\count($this->availableConnections) < $max) {
+                $this->connectMore(2);
+            } else {
+                foreach ($this->availableConnections as &$value) {
+                    $value += 1000;
+                }
+            }
         }
     }
     /**
