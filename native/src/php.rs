@@ -1,7 +1,7 @@
 // Copyright 2026 Alexander Pankratov <s.pankratoff@gmail.com>
 // SPDX-License-Identifier: AGPL-3.0-only
-use crate::crypto::{Buffer, Message, Operation};
-use crate::executor::{Admission, Executor};
+use crate::crypto::{Buffer, Message};
+use crate::executor::Executor;
 use ext_php_rs::{
     binary_slice::BinarySlice,
     prelude::*,
@@ -19,13 +19,18 @@ pub struct Crypto;
 #[php_impl]
 impl Crypto {
     pub fn version() -> &'static str {
-        "0.2.0" // PHP API compatibility, independent of the extension release.
+        env!("CARGO_PKG_VERSION")
     }
-    pub fn init(capacity: i64, byte_limit: i64, window_us: i64) -> PhpResult<i64> {
+    pub fn init(
+        capacity: i64,
+        byte_limit: i64,
+        window_us: i64,
+        fixed_width: i64,
+    ) -> PhpResult<i64> {
         if ext_php_rs::PHP_ZTS {
             return Err("The crypto worker currently requires NTS PHP".into());
         }
-        if capacity < 0 || byte_limit < 0 || window_us < 0 {
+        if capacity < 0 || byte_limit < 0 || window_us < 0 || fixed_width < 0 {
             return Err("Negative crypto limits".into());
         }
         let fd = EventLoop::init()?;
@@ -35,11 +40,15 @@ impl Crypto {
                     return Err("Crypto executor is closed".into());
                 }
             } else {
-                *e = Some(Executor::new(
-                    capacity as usize,
-                    byte_limit as usize,
-                    window_us as u64,
-                )?);
+                *e = Some(
+                    Executor::new(
+                        capacity as usize,
+                        byte_limit as usize,
+                        window_us as u64,
+                        fixed_width as usize,
+                    )
+                    .map_err(|e| e.to_string())?,
+                );
             }
             Ok(())
         })?;
@@ -50,6 +59,9 @@ impl Crypto {
     }
     pub fn wakeup() -> PhpResult<()> {
         EventLoop::wakeup()
+    }
+    pub fn pending() -> i64 {
+        EventLoop::pending() as i64
     }
     pub fn stop() {
         EXECUTOR.with_borrow_mut(|e| {
@@ -75,16 +87,7 @@ impl Crypto {
         if key.len() != 32 || iv.len() != 32 || !data.len().is_multiple_of(16) {
             return Err("Invalid AES-256-IGE input".into());
         }
-        execute(
-            if encrypt {
-                Operation::Encrypt
-            } else {
-                Operation::Decrypt
-            },
-            &data,
-            &key,
-            &iv,
-        )
+        execute(if encrypt { 1 } else { 2 }, &data, &key, &iv)
     }
     pub fn decode(
         data: BinarySlice<u8>,
@@ -98,18 +101,21 @@ impl Crypto {
         {
             return Err("Invalid transport message input".into());
         }
-        execute(Operation::Decode, &data, &auth, &message_key)
+        execute(4, &data, &auth, &message_key)
     }
 }
-fn execute(operation: Operation, data: &[u8], key: &[u8], iv: &[u8]) -> PhpResult<Vec<Zval>> {
-    let admission = EXECUTOR.with_borrow(|e| {
-        e.as_ref()
-            .ok_or("Crypto executor is unavailable")?
-            .reserve(data.len())
+fn execute(operation: u8, data: &[u8], key: &[u8], iv: &[u8]) -> PhpResult<Vec<Zval>> {
+    let lease = EXECUTOR.with_borrow(|e| -> PhpResult<_> {
+        let e = e.as_ref().ok_or("Crypto executor is unavailable")?;
+        if let Some(lease) = e.try_reserve(data.len()) {
+            Ok(Ok(lease))
+        } else {
+            Ok(Err(e.reserve(data.len()).map_err(|e| e.to_string())?))
+        }
     })?;
-    let lease = match admission {
-        Admission::Ready(lease) => lease,
-        Admission::Waiting(wait) => EventLoop::suspend_on(wait)??,
+    let lease = match lease {
+        Ok(lease) => lease,
+        Err(wait) => EventLoop::suspend_on(wait)?.map_err(|e| e.to_string())?,
     };
     let mut message = Message {
         operation,
@@ -120,7 +126,7 @@ fn execute(operation: Operation, data: &[u8], key: &[u8], iv: &[u8]) -> PhpResul
         auth: Zeroizing::new([0; 256]),
         message_key: [0; 16],
     };
-    if operation == Operation::Decode {
+    if operation == 4 {
         message.auth.copy_from_slice(key);
         message.message_key.copy_from_slice(iv);
     } else {
@@ -131,9 +137,10 @@ fn execute(operation: Operation, data: &[u8], key: &[u8], iv: &[u8]) -> PhpResul
         e.as_ref()
             .ok_or("Crypto executor is unavailable")?
             .enqueue(message, lease)
+            .map_err(|e| e.to_string())
     })?;
     let reply = EventLoop::suspend_on(receiver)?.map_err(|_| "Crypto worker stopped")?;
-    let output = reply.result?;
+    let output = reply.value.map_err(|e| e.to_string())?;
     // PHP conversion occurs here, on the original PHP thread. The lease covers
     // the result and copies until these return values have been constructed.
     Ok([output.data(), output.state()]
@@ -146,6 +153,7 @@ fn execute(operation: Operation, data: &[u8], key: &[u8], iv: &[u8]) -> PhpResul
         .collect())
 }
 pub extern "C" fn request_shutdown(_type: i32, _module: i32) -> i32 {
+    Crypto::stop();
     let _ = Crypto::shutdown();
     0
 }

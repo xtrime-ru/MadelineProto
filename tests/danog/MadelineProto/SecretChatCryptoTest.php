@@ -40,7 +40,7 @@ final class SecretChatCryptoTest extends TestCase
     public function testSerializationCannotPersistASequenceWithoutItsEncryptedMessage(int $version): void
     {
         NativeExecutor::initialize();
-        if (!NativeExecutor::get()) {
+        if (!NativeExecutor::get(3)) {
             self::markTestSkipped('Optional native IGE unavailable');
         }
         BypassFinals::enable();

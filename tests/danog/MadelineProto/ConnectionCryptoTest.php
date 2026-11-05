@@ -52,7 +52,7 @@ final class ConnectionCryptoTest extends TestCase
     public function testResultsCannotModifyAReplacementConnection(string $change, bool $damaged): void
     {
         NativeExecutor::initialize();
-        if (!NativeExecutor::get()) {
+        if (!NativeExecutor::get(NativeExecutor::DECODE_V2)) {
             self::markTestSkipped('Optional native decoder unavailable');
         }
         BypassFinals::enable();
@@ -136,7 +136,7 @@ final class ConnectionCryptoTest extends TestCase
     public function testUnsentMessagesSurviveConnectionChangesDuringEncryption(string $change): void
     {
         NativeExecutor::initialize();
-        if (!NativeExecutor::get()) {
+        if (!NativeExecutor::get(3)) {
             self::markTestSkipped('Optional native IGE unavailable');
         }
         BypassFinals::enable();

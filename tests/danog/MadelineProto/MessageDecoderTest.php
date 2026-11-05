@@ -40,7 +40,7 @@ final class MessageDecoderTest extends TestCase
     public function testAuthenticatedPayloads(string $class, int $size, int $padding, ?int $declared, string $damage): void
     {
         NativeExecutor::initialize();
-        if ($class === NativeMessageDecoder::class && !NativeExecutor::get()) {
+        if ($class === NativeMessageDecoder::class && !NativeExecutor::get(NativeExecutor::DECODE_V2)) {
             self::markTestSkipped('Optional native decoder unavailable');
         }
         $auth = random_bytes(256);
@@ -77,7 +77,7 @@ final class MessageDecoderTest extends TestCase
     public function testConcurrentMessagesWithDifferentPaddingRemainIndependent(): void
     {
         NativeExecutor::initialize();
-        if (!NativeExecutor::get()) {
+        if (!NativeExecutor::get(NativeExecutor::DECODE_V2)) {
             self::markTestSkipped('Optional native decoder unavailable');
         }
         $tasks = [];

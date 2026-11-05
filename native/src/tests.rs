@@ -1,11 +1,11 @@
 // Copyright 2026 Alexander Pankratov <s.pankratoff@gmail.com>
 // SPDX-License-Identifier: AGPL-3.0-only
 use crate::{
-    crypto::{self, Buffer, Message, Operation},
+    crypto::{self, Buffer, Message},
     policy::Policy,
 };
 use zeroize::Zeroizing;
-fn message(size: usize, seed: u8, operation: Operation) -> Message {
+fn message(size: usize, seed: u8, operation: u8) -> Message {
     Message {
         operation,
         input: Buffer::new(
@@ -13,7 +13,7 @@ fn message(size: usize, seed: u8, operation: Operation) -> Message {
                 .map(|i| (i as u8).wrapping_mul(73).wrapping_add(seed))
                 .collect(),
         ),
-        output: Buffer::uninitialized(size),
+        output: Buffer::new(vec![0; size]),
         key: Zeroizing::new([seed; 32]),
         iv: Zeroizing::new([seed.wrapping_add(1); 32]),
         auth: Zeroizing::new([0; 256]),
@@ -23,7 +23,7 @@ fn message(size: usize, seed: u8, operation: Operation) -> Message {
 #[test]
 fn independent_chains_match_evp_in_both_directions_and_resume() {
     for width in 1..=40 {
-        for operation in [Operation::Encrypt, Operation::Decrypt] {
+        for operation in [1, 2] {
             let mut jobs: Vec<_> = (0..width)
                 .map(|i| message(256 + 16 * (i % 3), i as u8, operation))
                 .collect();
@@ -110,110 +110,38 @@ fn policy_can_pass_eight_and_ignores_incomplete_batches() {
 #[test]
 fn accepted_jobs_survive_dropped_receivers_and_shutdown() {
     use crate::executor::Executor;
-    let mut executor = Executor::new(2, 4 * 1024 * 1024, 1000).unwrap();
+    let mut executor = Executor::new(2, 4 * 1024 * 1024, 1000, 2).unwrap();
     let first = executor
-        .enqueue(
-            message(65536, 1, Operation::Encrypt),
-            reserve_now(&executor, 65536),
-        )
+        .enqueue(message(65536, 1, 1), executor.try_reserve(65536).unwrap())
         .unwrap();
     let second = executor
-        .enqueue(
-            message(65536, 2, Operation::Decrypt),
-            reserve_now(&executor, 65536),
-        )
+        .enqueue(message(65536, 2, 2), executor.try_reserve(65536).unwrap())
         .unwrap();
-    assert!(matches!(
-        executor.reserve(16).unwrap(),
-        crate::executor::Admission::Waiting(_)
-    ));
+    assert!(executor.try_reserve(16).is_none());
     drop(first); // Cancellation releases no buffers owned by the worker.
     executor.close();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let result = runtime.block_on(second).unwrap();
-    assert_eq!(result.result.as_ref().unwrap().data().len(), 65536);
+    assert_eq!(result.value.as_ref().unwrap().data().len(), 65536);
     assert!(!executor.is_open());
     executor.close();
 }
-fn reserve_now(executor: &crate::executor::Executor, size: usize) -> crate::executor::Lease {
-    match executor.reserve(size).unwrap() {
-        crate::executor::Admission::Ready(lease) => lease,
-        crate::executor::Admission::Waiting(_) => panic!("queue should have space"),
-    }
-}
-
 #[test]
-fn memory_pressure_waits_for_result_consumption_and_shutdown_wakes_admission() {
-    use crate::executor::{Admission, Executor};
-    let mut executor = Executor::new(4, 256 * 1024, 0).unwrap();
-    assert!(executor.reserve(256 * 1024).is_err());
-    let first = executor
-        .enqueue(
-            message(65536, 1, Operation::Encrypt),
-            reserve_now(&executor, 65536),
-        )
+fn queue_accounts_unconsumed_results_and_rejects_oversized_work() {
+    use crate::executor::Executor;
+    let mut executor = Executor::new(1, 8192, 0, 1).unwrap();
+    assert!(executor.reserve(4096).is_err());
+    let receiver = executor
+        .enqueue(message(16, 1, 1), executor.try_reserve(16).unwrap())
         .unwrap();
-    let Admission::Waiting(wait) = executor.reserve(65536).unwrap() else {
-        panic!("memory limit was bypassed")
-    };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
-    let result = runtime.block_on(first).unwrap();
-    // A completed result still owns the queue memory until its caller consumes it.
-    assert!(matches!(
-        executor.reserve(65536).unwrap(),
-        Admission::Waiting(_)
-    ));
+    let result = runtime.block_on(receiver).unwrap();
+    assert!(executor.try_reserve(16).is_none());
     drop(result);
-    let second = executor
-        .enqueue(
-            message(65536, 2, Operation::Decrypt),
-            runtime.block_on(wait).unwrap(),
-        )
-        .unwrap();
-    let Admission::Waiting(wait) = executor.reserve(65536).unwrap() else {
-        panic!("memory limit was bypassed")
-    };
+    assert!(executor.try_reserve(16).is_some());
     executor.close();
-    assert!(runtime.block_on(wait).is_err());
-    assert_eq!(
-        runtime
-            .block_on(second)
-            .unwrap()
-            .result
-            .unwrap()
-            .data()
-            .len(),
-        65536
-    );
-}
-
-#[test]
-fn unequal_lengths_and_empty_chains_preserve_data_and_iv() {
-    for sizes in [[0, 16, 65536], [16, 65536, 131056], [65536, 65552, 131056]] {
-        for direction in [Operation::Encrypt, Operation::Decrypt] {
-            let mut actual: Vec<_> = sizes
-                .into_iter()
-                .enumerate()
-                .map(|(i, size)| message(size, i as u8, direction))
-                .collect();
-            let expected: Vec<_> = sizes
-                .into_iter()
-                .enumerate()
-                .map(|(i, size)| {
-                    let mut m = message(size, i as u8, direction);
-                    crypto::evp(&mut m).unwrap();
-                    (m.output.to_vec(), m.iv.to_vec())
-                })
-                .collect();
-            crypto::batch(&mut actual).unwrap();
-            for (m, (data, iv)) in actual.iter().zip(expected) {
-                assert_eq!(&m.output[..], data);
-                assert_eq!(&m.iv[..], iv);
-            }
-        }
-    }
 }

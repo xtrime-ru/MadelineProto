@@ -42,16 +42,16 @@ final class IGENative extends IGE
     #[\Override]
     public function encrypt(string $plaintext): string
     {
-        return $this->process($plaintext, true);
+        return $this->process($plaintext, NativeExecutor::ENCRYPT);
     }
 
     #[\Override]
     public function decrypt(string $ciphertext): string
     {
-        return $this->process($ciphertext, false);
+        return $this->process($ciphertext, NativeExecutor::DECRYPT);
     }
 
-    private function process(string $data, bool $encrypt): string
+    private function process(string $data, int $operation): string
     {
         if (\strlen($data) % 16) {
             throw new ValueError('AES-IGE data length must be a multiple of 16');
@@ -61,17 +61,17 @@ final class IGENative extends IGE
             if ($data === '') {
                 return '';
             }
-            $executor = NativeExecutor::get();
+            $executor = NativeExecutor::get($operation);
             if (!$executor) {
                 // The last committed IV is sufficient to continue after executor shutdown.
                 $fallback = IGE::getInstance($this->key, $this->iv);
-                $output = $encrypt ? $fallback->encrypt($data) : $fallback->decrypt($data);
+                $output = $operation === NativeExecutor::ENCRYPT ? $fallback->encrypt($data) : $fallback->decrypt($data);
                 $this->iv = $fallback->getState();
                 return $output;
             }
-            $result = $executor->run(fn (): array => \danog\MadelineProto\Native\Crypto::ige($data, $this->key, $this->iv, $encrypt));
-            $this->iv = $result[1];
-            return $result[0];
+            $result = $executor->submit(fn (\FFI $ffi, \FFI\CData $pool): int => (int) $ffi->madeline_crypto_submit($pool, $operation, $data, \strlen($data), $this->key, $this->iv))->await();
+            $this->iv = $result['state'];
+            return $result['data'];
         } finally {
             $lock->release();
         }
