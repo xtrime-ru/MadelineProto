@@ -28,6 +28,7 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\DeferredFuture;
 use AssertionError;
+use danog\MadelineProto\Codecs\AacTranscoder;
 use danog\MadelineProto\GroupCall\Rtmp\FlvTags;
 use danog\MadelineProto\LocalFile;
 use danog\MadelineProto\Logger;
@@ -43,9 +44,12 @@ use danog\MadelineProto\Tgcalls\H264Framing;
 use danog\MadelineProto\Tgcalls\VideoCodecObserver;
 use danog\MadelineProto\Tools;
 use Revolt\EventLoop;
+use Revolt\EventLoop\Suspension;
 use SplQueue;
 use Throwable;
 use Webrtc\Codecs\Codec;
+
+use function Amp\async;
 
 /**
  * The single disc jockey of a call: it plays a playlist of files, streaming both their audio and
@@ -56,14 +60,17 @@ use Webrtc\Codecs\Codec;
  *
  * - A WebM/Matroska file (it begins with the EBML header) is demuxed by {@see Matroska}: its already
  *   encoded video and OPUS audio frames are handed to the RTP senders untouched, keeping the
- *   timestamps they had in the file, which is what keeps the two in sync.
+ *   timestamps they had in the file, which is what keeps the two in sync. So is an MP4 file, by {@see Mp4}.
+ *   A call that can only carry OPUS gets the AAC audio of a file without OPUS audio transcoded, by
+ *   {@see AacTranscoder}: with ffmpeg and libopus if available, in pure PHP otherwise. An RTMP
+ *   livestream carries H.264 and AAC, as they are.
  * - An OGG OPUS file is demuxed by {@see Ogg}: its packets are handed to the tracks untouched, each
  *   paced by its own duration. Anything else is converted to OGG OPUS on the fly by ffmpeg.
  *   The legacy libtgvoip engine can only send 60ms packets, so for it ({@see self::setFixedOggGrid()})
  *   only MadelineProto's own OGG OPUS files are played as-is, and the others are converted too.
  *
- * Nothing is decoded or re-encoded for pre-encoded input, so playback needs no codec library (and
- * therefore no FFI). Frames are **streamed**, not buffered whole: the reader reads only as far ahead
+ * Nothing is decoded or re-encoded for pre-encoded input (but AAC, in calls), so playback needs no codec
+ * library (and therefore no FFI). Frames are **streamed**, not buffered whole: the reader reads only as far ahead
  * of playback as configured ({@see \danog\MadelineProto\Settings\VoIP::setPlaybackLookahead()}, just
  * the next frame by default) and blocks until the tracks drain it, so memory stays bounded however
  * long the file is. The frames read ahead are not saved: playback resumes exactly from the first one
@@ -171,6 +178,9 @@ final class DjLoop extends VoIPLoop
     private ?DeferredFuture $drainDeferred = null;
     /** Awaited by {@see self::pullPacket()} and {@see self::awaitFrame()} until a frame is queued. */
     private ?DeferredFuture $packetDeferred = null;
+    /** @var array<int, Suspension<null>> Waiting in {@see self::awaitFrame()}, by id. */
+    private array $frameWaiters = [];
+    private int $nextFrameWaiter = 0;
     /** Whether the current WebM file has audio for the audio track, see {@see self::isStarving()}. */
     private bool $currentHasAudio = false;
     /** Whether the current WebM file has video for the video track, see {@see self::isStarving()}. */
@@ -240,10 +250,17 @@ final class DjLoop extends VoIPLoop
     /** Whether {@see self::$videoParameters} is still a tentative value awaiting the first keyframe. */
     private bool $videoProfileFromFrame = false;
     private ?H264Framing $framing = null;
-    /** The track number of the AAC audio of the current file, in RTMP mode. */
+    /**
+     * The track number of the AAC audio of the current file: played as it is in RTMP mode, transcoded to OPUS
+     * otherwise (if the file has no OPUS audio).
+     */
     private ?int $aacTrack = null;
     /** The AudioSpecificConfig of {@see self::$aacTrack}, for the ADTS headers of its frames. */
     private ?string $aacConfig = null;
+    /** Transcodes {@see self::$aacTrack} to OPUS, outside of RTMP mode: not saved, recreated when the file is resumed. */
+    private ?AacTranscoder $aacTranscoder = null;
+    /** @var ?list{int, int} The resume position of the last AAC frame transcoded, for the packets it completes. */
+    private ?array $aacPosition = null;
     /** Whether a video codec was announced and still owes the observer a stop notification. */
     private bool $webmVideoAnnounced = false;
 
@@ -441,6 +458,7 @@ final class DjLoop extends VoIPLoop
         $this->previous = [];
         $this->packetDeferred?->complete(false);
         $this->packetDeferred = null;
+        $this->wakeFrameWaiters();
     }
 
     #[\Override]
@@ -585,15 +603,34 @@ final class DjLoop extends VoIPLoop
      */
     public function awaitFrame(float $timeout): void
     {
-        $this->packetDeferred ??= new DeferredFuture;
-        $future = $this->packetDeferred->getFuture();
-        $timeoutCancellation = new DeferredCancellation;
-        $timer = EventLoop::delay($timeout, static fn () => $timeoutCancellation->cancel());
+        // Resumed by whichever comes first, the timer or a queued frame: no cancellation, whose
+        // CancelledException (and backtrace) was built every time the timeout won.
+        $suspension = EventLoop::getSuspension();
+        $id = $this->nextFrameWaiter++;
+        $this->frameWaiters[$id] = $suspension;
+        $waiters = &$this->frameWaiters;
+        $timer = EventLoop::delay($timeout, static function () use (&$waiters, $id): void {
+            if (isset($waiters[$id])) {
+                $suspension = $waiters[$id];
+                unset($waiters[$id]);
+                $suspension->resume();
+            }
+        });
         try {
-            $future->await($timeoutCancellation->getCancellation());
-        } catch (CancelledException) {
+            $suspension->suspend();
         } finally {
             EventLoop::cancel($timer);
+            unset($this->frameWaiters[$id]);
+        }
+    }
+
+    /** Resume everything waiting in {@see self::awaitFrame()}. */
+    private function wakeFrameWaiters(): void
+    {
+        $waiters = $this->frameWaiters;
+        $this->frameWaiters = [];
+        foreach ($waiters as $suspension) {
+            $suspension->resume();
         }
     }
 
@@ -893,6 +930,8 @@ final class DjLoop extends VoIPLoop
             $this->instance->log("Could not play {$this->describe($item)} in {$this}: $e", Logger::ERROR);
             return false;
         } finally {
+            $this->aacTranscoder?->close();
+            $this->aacTranscoder = null;
             if ($item instanceof StreamSnapshot && $file instanceof ReadableStream) {
                 // Stop the download, if the stream was skipped before its end.
                 $file->close();
@@ -987,9 +1026,7 @@ final class DjLoop extends VoIPLoop
         ?Cancellation $cancellation,
         bool $resuming
     ): void {
-        if ($resuming) {
-            $ogg = new Ogg($file, $cancellation, $this->resumeOffset);
-        } elseif ($convert) {
+        if ($convert && !$resuming) {
             if (!Tools::canConvertOgg()) {
                 throw new AssertionError($this->fixedOggGrid
                     ? 'The passed file was not generated by MadelineProto or @libtgvoipbot, please pre-convert it using @libtgvoip bot or install FFI and ffmpeg to perform realtime conversion!'
@@ -997,18 +1034,42 @@ final class DjLoop extends VoIPLoop
             }
             // Convert to OGG OPUS on the fly; the resulting pipe is not seekable, so it is not resumable.
             $pipe = new Pipe(4096);
-            EventLoop::queue(static function () use ($source, $pipe, $cancellation): void {
+            // Its error is the one to report: what's read from the pipe then just ends early.
+            $conversion = async(static function () use ($source, $pipe, $cancellation): void {
                 try {
                     Ogg::convert($source, $pipe->getSink(), $cancellation);
-                } catch (CancelledException) {
                 } finally {
                     EventLoop::queue($pipe->getSink()->close(...));
                 }
             });
-            $ogg = new Ogg($pipe->getSource());
-        } else {
-            $ogg = new Ogg($source, $cancellation);
+            // Awaited below, unless reading stopped first.
+            $conversion->ignore();
+            try {
+                $this->streamOggPackets(new Ogg($pipe->getSource()), $generation, $cancellation, $resuming);
+            } catch (Throwable $e) {
+                if ($conversion->isComplete()) {
+                    // The cause, if it failed.
+                    $conversion->await();
+                } else {
+                    // Nobody reads the pipe anymore: stop the conversion writing to it.
+                    $pipe->getSource()->close();
+                }
+                throw $e;
+            }
+            if ($generation !== $this->generation) {
+                // Skipped: as above.
+                $pipe->getSource()->close();
+                return;
+            }
+            // Read to its end: done, or failed midway.
+            $conversion->await();
+            return;
         }
+        $this->streamOggPackets($resuming ? new Ogg($file, $cancellation, $this->resumeOffset) : new Ogg($source, $cancellation), $generation, $cancellation, $resuming);
+    }
+
+    private function streamOggPackets(Ogg $ogg, int $generation, ?Cancellation $cancellation, bool $resuming): void
+    {
         $skip = $resuming ? $this->resumeSkip : 0;
         foreach ($ogg->opusPackets as $packet) {
             if ($generation !== $this->generation) {
@@ -1049,6 +1110,9 @@ final class DjLoop extends VoIPLoop
                     }
                 }
             }
+            if (!$this->rtmp && !$this->videoOnly && $this->aacConfig !== null) {
+                $this->startTranscoder();
+            }
         } else {
             $matroska = new Matroska($source, $cancellation);
             $this->resumeTracks = $matroska->tracks;
@@ -1062,6 +1126,9 @@ final class DjLoop extends VoIPLoop
                 if (isset($this->audioCodecs()[$track['codec']])) {
                     $this->currentHasAudio = true;
                 }
+            }
+            if ($this->aacTranscoder !== null) {
+                $this->currentHasAudio = true;
             }
         }
         $skip = $resuming ? $this->resumeSkip : 0;
@@ -1086,6 +1153,7 @@ final class DjLoop extends VoIPLoop
                 $this->throttle($generation, $cancellation);
             }
         }
+        $this->flushTranscoder($generation);
     }
 
     /**
@@ -1104,6 +1172,9 @@ final class DjLoop extends VoIPLoop
                     $this->currentHasAudio = true;
                 }
             }
+            if ($this->aacTranscoder !== null) {
+                $this->currentHasAudio = true;
+            }
         }
         foreach ($mp4->frames as $frame) {
             if ($generation !== $this->generation) {
@@ -1114,6 +1185,7 @@ final class DjLoop extends VoIPLoop
                 $this->throttle($generation, $cancellation);
             }
         }
+        $this->flushTranscoder($generation);
     }
 
     /**
@@ -1126,6 +1198,12 @@ final class DjLoop extends VoIPLoop
     {
         $timestampMs = $frame['timestamp'];
         $this->bufferedUntilMs = max($this->bufferedUntilMs, $timestampMs);
+        if ($this->aacTranscoder !== null && $frame['track'] === $this->aacTrack) {
+            // Its packets come out (into the queue) later, see startTranscoder().
+            $this->aacPosition = $position;
+            $this->aacTranscoder->push($frame['data'], $timestampMs);
+            return true;
+        }
         if (isset($this->audioCodecs()[$frame['codec']])) {
             // A presentation/screencast stream transmits video only; drop its audio.
             if ($this->videoOnly) {
@@ -1225,10 +1303,26 @@ final class DjLoop extends VoIPLoop
     private function isStarving(): bool
     {
         if ($this->playsFrames()) {
-            return ($this->currentHasAudio && $this->webmAudioQueue->isEmpty())
+            return ($this->currentHasAudio && $this->queuedAudioMs() < ($this->aacTranscoder?->latencyMs() ?? 1))
                 || ($this->currentHasVideo && $this->videoQueue->isEmpty());
         }
         return $this->oggQueue->isEmpty();
+    }
+
+    /**
+     * The audio queued, in milliseconds: transcoded audio comes out of its transcoder later than the frames read, so
+     * it starves while less than the transcoder's latency is queued, not just once its queue is empty.
+     */
+    private function queuedAudioMs(): int
+    {
+        if ($this->webmAudioQueue->isEmpty()) {
+            return 0;
+        }
+        /** @var array{timestamp: int, ...} $first */
+        $first = $this->webmAudioQueue->bottom();
+        /** @var array{timestamp: int, ...} $last */
+        $last = $this->webmAudioQueue->top();
+        return intdiv($last['timestamp'] - $first['timestamp'], 48) + 20;
     }
 
     private function bufferedAheadMs(): int
@@ -1249,7 +1343,7 @@ final class DjLoop extends VoIPLoop
         }
     }
 
-    /** Wake anything blocked in {@see self::pullPacket()}. */
+    /** Wake anything blocked in {@see self::pullPacket()} or {@see self::awaitFrame()}. */
     private function wakePacketWaiters(): void
     {
         if ($this->packetDeferred !== null) {
@@ -1257,6 +1351,7 @@ final class DjLoop extends VoIPLoop
             $this->packetDeferred = null;
             $deferred->complete(true);
         }
+        $this->wakeFrameWaiters();
     }
 
     private function hasPendingOggWork(): bool
@@ -1286,8 +1381,12 @@ final class DjLoop extends VoIPLoop
         $this->framing = null;
         $this->aacTrack = null;
         $this->aacConfig = null;
+        $this->aacTranscoder?->close();
+        $this->aacTranscoder = null;
         if ($this->rtmp) {
             $this->selectRtmpAudio($matroska);
+        } elseif (!$this->videoOnly) {
+            $this->selectTranscodedAudio($matroska);
         }
         foreach ($matroska->tracks as $track) {
             if ($this->videoCodec !== null || !isset($this->videoCodecs()[$track['codec']])) {
@@ -1308,7 +1407,11 @@ final class DjLoop extends VoIPLoop
             }
         }
         $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_VIDEO, $this->videoCodecs());
-        $this->warnAboutDroppedTracks($matroska, Matroska::TRACK_TYPE_AUDIO, $this->audioCodecs());
+        $this->warnAboutDroppedTracks(
+            $matroska,
+            Matroska::TRACK_TYPE_AUDIO,
+            $this->aacTranscoder !== null ? $this->audioCodecs() + self::RTMP_AUDIO_CODECS : $this->audioCodecs(),
+        );
         if ($this->videoCodec !== null) {
             // The transport has to be renegotiated before the first frame goes out, or the peer
             // would decode it as whatever codec the previous file used.
@@ -1317,6 +1420,70 @@ final class DjLoop extends VoIPLoop
         } else {
             // No video in this file: stop the video a previous file left announced.
             $this->announceVideoStopped();
+        }
+    }
+
+    /**
+     * Pick the AAC track of a file without OPUS audio to transcode to OPUS, for a call that can only carry OPUS.
+     */
+    private function selectTranscodedAudio(Matroska|Mp4 $demuxer): void
+    {
+        foreach ($demuxer->tracks as $track) {
+            if (isset(self::AUDIO_CODECS[$track['codec']])) {
+                return;
+            }
+        }
+        foreach ($demuxer->tracks as $number => $track) {
+            if ($track['type'] === Matroska::TRACK_TYPE_AUDIO && isset(self::RTMP_AUDIO_CODECS[$track['codec']]) && ($track['private'] ?? '') !== '') {
+                $this->aacTrack = $number;
+                $this->aacConfig = $track['private'];
+                $this->startTranscoder();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Start transcoding the AAC track to OPUS; if it can't be decoded, its audio is not transmitted.
+     */
+    private function startTranscoder(): void
+    {
+        \assert($this->aacConfig !== null);
+        $generation = $this->generation;
+        $this->aacPosition = null;
+        try {
+            $this->aacTranscoder = AacTranscoder::create($this->aacConfig, function (string $packet, int $timestamp) use ($generation): void {
+                if ($generation !== $this->generation) {
+                    // Skipped meanwhile.
+                    return;
+                }
+                $this->webmAudioQueue->enqueue([
+                    'data' => $packet,
+                    'timestamp' => $timestamp,
+                    'position' => $this->aacPosition,
+                    'file' => $generation,
+                ]);
+                $this->wakePacketWaiters();
+            });
+            $this->instance->log("Transcoding the AAC audio of the file played in {$this} to OPUS with {$this->aacTranscoder->describe()}");
+        } catch (AssertionError $e) {
+            $this->aacTranscoder = null;
+            $this->instance->log("The AAC audio of the file played in {$this} will not be transmitted: {$e->getMessage()}", Logger::WARNING);
+        }
+    }
+
+    /**
+     * Enqueue the rest of the transcoded audio, at the end of a file.
+     */
+    private function flushTranscoder(int $generation): void
+    {
+        if ($this->aacTranscoder === null || $generation !== $this->generation) {
+            return;
+        }
+        try {
+            $this->aacTranscoder->finish();
+        } catch (AssertionError $e) {
+            $this->instance->log("Could not transcode the end of the AAC audio of the file played in {$this}: {$e->getMessage()}", Logger::WARNING);
         }
     }
 

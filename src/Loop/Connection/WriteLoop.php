@@ -60,6 +60,9 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
 
     private readonly bool $isHttp;
 
+    /**
+     * RPC resend timeout, in nanoseconds like the send times (hrtime) of the messages.
+     */
     private int $resendTimeout;
 
     private LinkedList $queue;
@@ -71,7 +74,7 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
     public function __construct(Connection $connection)
     {
         $this->init2($connection);
-        $this->resendTimeout = $this->API->getSettings()->getRpc()->getRpcResendTimeout();
+        $this->resendTimeout = $this->API->getSettings()->getRpc()->getRpcResendTimeout() * 1_000_000_000;
         $connection->getState()->subscribe($this);
     }
 
@@ -128,7 +131,11 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                     $this->API->logger("Stopping $this because we have to reconnect");
                     return self::STOP;
                 }
-                EventLoop::queue(function () use ($e): void {
+                $stream = $this->connection->stream;
+                EventLoop::queue(function () use ($e, $stream): void {
+                    if ($stream !== null) {
+                        $this->shared->fileConnectionDropped($this->connection, $stream);
+                    }
                     $this->API->logger($e);
                     $this->API->logger("Got nothing in the socket in DC {$this->datacenter}, reconnecting...", Logger::ERROR);
                     $this->connection->reconnect();
@@ -209,6 +216,7 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                 if ($msgIds) {
                     $this->API->logger("Still missing {$list} on DC {$this->datacenter}, sending state request", Logger::ERROR);
                     $stream = $this->connection->stream;
+                    $requestedAt = hrtime(true);
                     $this->connection->objectCallAsync('msgs_state_req', [
                         'msg_ids' => $msgIds,
                         'cancellation' => new \Amp\TimeoutCancellation(
@@ -216,7 +224,7 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                             "Timeout while waiting for msgs_state_req response on DC {$this->datacenter}"
                         ),
                     ], $deferred);
-                    $deferred->getFuture()->map(function (array|\Closure $result) use ($arr, $stream): void {
+                    $deferred->getFuture()->map(function (array|\Closure $result) use ($arr, $requestedAt, $stream): void {
                         if (\is_callable($result)) {
                             try {
                                 $result();
@@ -243,6 +251,16 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                                     $this->connection->ack_queue[] = $message->getMsgId();
                                     continue;
                                 }
+                                if ($message->getSent() > $requestedAt) {
+                                    // The state is the one of the message as sent before the state request, but sent()
+                                    // stamps every write to the socket: it was already written again since (by the
+                                    // answer to another state request, sent every timeout seconds while this one is
+                                    // unanswered, a bad_msg_notification or bad_server_salt, a msg_resend_req, an RPC
+                                    // error repeated on the same DC, a session reset, or the restore of the messages of
+                                    // a DC whose sockets were replaced). Acting on it would send the request once more.
+                                    $this->API->logger("Ignoring the state of $message, sent again since the state request");
+                                    continue;
+                                }
                                 $chr = \ord($chr);
                                 switch ($chr & 7) {
                                     case 0:
@@ -255,7 +273,7 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                                             $message->reply(null);
                                             break;
                                         }
-                                        $this->API->logger("Message $message not received by server, resending...", Logger::ERROR);
+                                        $this->API->logger("Message $message not received by server (state $chr), resending...", Logger::ERROR);
                                         $this->connection->methodRecall($message);
                                         break;
                                     case 4:
@@ -285,6 +303,13 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
                     });
                 }
             }
+
+            // What the payload is built for: building and encrypting it can suspend (logging, IGE), and the
+            // connection can be disconnected or get a new session or key meanwhile.
+            $auth = $this->shared->auth;
+            $stream = $this->connection->stream;
+            $session = $this->connection->session_id;
+            $authKey = $auth->getTempAuthKey();
 
             $messages = [];
             $MTmessages = [];
@@ -419,19 +444,35 @@ final class WriteLoop extends Loop implements Subscriber, EphemeralSubscriber
             }
             unset($MTmessages);
 
-            $auth = $this->shared->auth;
-
-            $plaintext = $auth->getServerSalt().$this->connection->session_id.Tools::packSignedLong($message_id).pack('VV', $seq_no, $message_data_length).$message_data;
+            $plaintext = $auth->getServerSalt().$session.Tools::packSignedLong($message_id).pack('VV', $seq_no, $message_data_length).$message_data;
             $padding = Tools::posmod(-\strlen($plaintext), 16);
             if ($padding < 12) {
                 $padding += 16;
             }
             $padding = Tools::random($padding);
-            $message_key_large = hash('sha256', $auth->getTempAuthKeyForHash().$plaintext.$padding, true);
+            $message_key_large = Crypt::sha256($auth->getTempAuthKeyForHash().$plaintext.$padding);
             $message_key = substr($message_key_large, 8, 16);
             //$ack = unpack('V', substr($message_key_large, 0, 4))[1] | (1 << 31);
-            [$aes_key, $aes_iv] = Crypt::kdf($message_key, $auth->getTempAuthKey());
+            [$aes_key, $aes_iv] = Crypt::kdf($message_key, $authKey);
             $message = $auth->getTempID().$message_key.Crypt::igeEncrypt($plaintext.$padding, $aes_key, $aes_iv);
+            // Leave the messages queued for the current connection, session and key.
+            $contextChanged = $session !== $this->connection->session_id
+                || $authKey !== $this->shared->auth->getTempAuthKey();
+            if ($stream !== $this->connection->stream || $contextChanged) {
+                if ($contextChanged) {
+                    // The container was never queued; session-bound messages fail, the rest get new IDs.
+                    foreach ($messages as $unsent) {
+                        if (!$unsent instanceof Container && !$unsent->hasReply()) {
+                            $unsent->resetForResend();
+                        }
+                    }
+                }
+                if ($stream !== $this->connection->stream) {
+                    // Disconnected: the next connection sends them.
+                    return;
+                }
+                continue;
+            }
             $buffer = $this->connection->stream->getWriteBuffer($total_len = \strlen($message));
             $buffer->bufferWrite($message);
             $this->connection->httpSent();

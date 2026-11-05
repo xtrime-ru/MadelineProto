@@ -18,17 +18,21 @@ namespace danog\MadelineProto\EventHandler\Story;
 
 use AssertionError;
 use danog\MadelineProto\EventHandler\AbstractStory;
+use danog\MadelineProto\EventHandler\Calls\LiveStory;
 use danog\MadelineProto\EventHandler\Media\Gif;
 use danog\MadelineProto\EventHandler\Media\Photo;
 use danog\MadelineProto\EventHandler\Media\Video;
 use danog\MadelineProto\EventHandler\Message;
 use danog\MadelineProto\EventHandler\Message\Entities\MessageEntity;
 use danog\MadelineProto\EventHandler\Message\ReportReason;
+use danog\MadelineProto\EventHandler\Message\RichMessage;
 use danog\MadelineProto\EventHandler\Privacy\RuleDestination;
 use danog\MadelineProto\Ipc\Client;
 use danog\MadelineProto\MTProto;
 use danog\MadelineProto\ParseMode;
+use danog\MadelineProto\RichParseMode;
 use danog\MadelineProto\StrTools;
+use danog\MadelineProto\TL\Conversion\Rich\InputConverter;
 
 /**
  * Represents a Telegram story.
@@ -68,8 +72,11 @@ final class Story extends AbstractStory
     /** @var list<MessageEntity> Message [entities](https://core.telegram.org/api/entities) for story caption */
     public readonly array $entities;
 
-    /** Attached media. */
-    public readonly Gif|Photo|Video $media;
+    /**
+     * Attached media: for a live story, the live story itself (its details are those of the story until it's used, e.g.
+     * joined, which fetches the call).
+     */
+    public readonly Gif|Photo|Video|LiveStory $media;
 
     /** A set of physical coordinates associated to this story */
     //public readonly ?array $mediaAreas; //!
@@ -125,7 +132,10 @@ final class Story extends AbstractStory
         $this->date = $rawStory['date'];
         $this->expireDate = $rawStory['expire_date'];
 
-        $this->media = $API->wrapMedia($rawStory['media'], $this->protected);
+        $this->media = $rawStory['media']['_'] === 'messageMediaVideoStream'
+            // A live story: a group call, no file.
+            ? $API->wrapLiveStoryMedia($rawStory['media'], $this->senderId)
+            : $API->wrapMedia($rawStory['media'], $this->protected);
         $this->entities = MessageEntity::fromRawEntities($rawStory['entities'] ?? []);
         $this->privacy = array_map(RuleDestination::fromRawRule(...), $rawStory['privacy'] ?? []);
 
@@ -170,7 +180,7 @@ final class Story extends AbstractStory
                 'peer' => $this->senderId,
                 'message' => $message,
                 'parse_mode' => $parseMode,
-                'reply_to' => ['_' => 'inputReplyToStory', 'user_id' => $this->senderId, 'story_id' => $this->id],
+                'reply_to' => ['_' => 'inputReplyToStory', 'peer' => $this->senderId, 'story_id' => $this->id],
                 'reply_markup' => $replyMarkup,
                 'schedule_date' => $scheduleDate,
                 'silent' => $silent,
@@ -196,6 +206,49 @@ final class Story extends AbstractStory
             $last = $new;
         }
         return $first;
+    }
+
+    /**
+     * Reply to the story with a [rich message](https://core.telegram.org/bots/api#sendrichmessage).
+     *
+     * @param string|array|RichMessage $message      Rich message: Markdown or HTML (depending on $parseMode), a list of blocks (Block objects or Bot API InputRichBlock arrays), a received RichMessage, or a Bot API InputRichMessage (see sendRichMessage)
+     * @param RichParseMode            $parseMode    How to parse a string $message: plain text (the default) is sent as a single paragraph, Markdown and HTML are parsed by Telegram.
+     * @param array|null               $replyMarkup  Keyboard information.
+     * @param integer|null             $scheduleDate Schedule date.
+     * @param boolean                  $silent       Whether to send the message silently, without triggering notifications.
+     * @param boolean                  $background   Send this message as background message
+     * @param boolean                  $clearDraft   Clears the draft field
+     * @param array                    $media        Media referenced by Markdown or HTML messages, as a map from ID to file (see sendRichMessage).
+     * @param boolean                  $rtl          Whether the text is right-to-left
+     * @param boolean                  $noAutolink   Whether to skip the automatic detection of mentions, hashtags, URLs and so on
+     */
+    public function replyRich(
+        string|array|RichMessage $message,
+        RichParseMode $parseMode = RichParseMode::TEXT,
+        ?array $replyMarkup = null,
+        ?int $scheduleDate = null,
+        bool $silent = false,
+        bool $background = false,
+        bool $clearDraft = false,
+        array $media = [],
+        bool $rtl = false,
+        bool $noAutolink = false,
+    ): Message {
+        $result = $this->getClient()->methodCallAsyncRead(
+            'messages.sendMessage',
+            [
+                'peer' => $this->senderId,
+                'message' => '',
+                'rich_message' => InputConverter::fromParameters($message, $parseMode, $media, $rtl, $noAutolink),
+                'reply_to' => ['_' => 'inputReplyToStory', 'peer' => $this->senderId, 'story_id' => $this->id],
+                'reply_markup' => $replyMarkup,
+                'schedule_date' => $scheduleDate,
+                'silent' => $silent,
+                'background' => $background,
+                'clear_draft' => $clearDraft,
+            ]
+        );
+        return $this->getClient()->wrapMessage($this->getClient()->extractMessage($result));
     }
 
     /**

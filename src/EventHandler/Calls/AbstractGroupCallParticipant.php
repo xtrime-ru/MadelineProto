@@ -132,7 +132,7 @@ abstract class AbstractGroupCallParticipant extends MultiCallParticipant
      * Flatten the source SSRCs of a
      * [groupCallParticipantVideo](https://core.telegram.org/constructor/groupCallParticipantVideo),
      * taking each source group's primary (first) source and every simulcast layer, deduplicated.
-     * Retransmission (FID) pairs contribute only their main source, since we do not record rtx.
+     * Retransmission (FID) pairs contribute only their main source (GroupCallController keeps the other).
      *
      * @param mixed $video The `video` or `presentation` field of a groupCallParticipant, if present.
      *

@@ -18,6 +18,8 @@ namespace danog\MadelineProto\Tgcalls\E2E;
 
 use danog\MadelineProto\Magic;
 
+use danog\MadelineProto\MTProtoTools\Crypt;
+
 /**
  * The commit-reveal emoji verification of an end-to-end encrypted conference call (subchain 1).
  *
@@ -36,7 +38,7 @@ final class Verification
      *
      * @return array{nonce: string, commit: array<string, mixed>, reveal: array<string, mixed>}
      */
-    public static function makeNonce(int $userId, int $chainHeight, string $chainHash, string $seed): array
+    public static function makeNonce(int $userId, int $chainHeight, string $chainHash, #[\SensitiveParameter] string $seed): array
     {
         $nonce = random_bytes(32);
         $commit = [
@@ -69,7 +71,7 @@ final class Verification
      *
      * @return array<string, mixed>
      */
-    private static function sign(array $broadcast, string $seed): array
+    private static function sign(array $broadcast, #[\SensitiveParameter] string $seed): array
     {
         $codec = new BlockCodec();
         $payload = $broadcast;
@@ -106,13 +108,11 @@ final class Verification
      * byte strings, concatenated, and used as the HMAC-SHA512 key over the last block hash.
      *
      * @param list<string> $nonces Every participant's revealed 32-byte nonce.
-     *
-     * @psalm-pure
      */
     public static function emojiHash(array $nonces, string $lastBlockHash): string
     {
         sort($nonces, SORT_STRING);
-        return hash_hmac('sha512', $lastBlockHash, implode('', $nonces), true);
+        return Crypt::hmac('sha512', $lastBlockHash, implode('', $nonces));
     }
 
     /**

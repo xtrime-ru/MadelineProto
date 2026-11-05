@@ -200,7 +200,7 @@ final class Endpoint
             $encrypted_data = $payload->bufferRead($l-($pos+16));
             $packet = Crypt::igeDecrypt($encrypted_data, $aes_key, $aes_iv);
 
-            if ($message_key != substr(hash('sha256', substr($this->authKey, 88 + ($this->creator ? 8 : 0), 32).$packet, true), 8, 16)) {
+            if ($message_key != substr(Crypt::sha256(substr($this->authKey, 88 + ($this->creator ? 8 : 0), 32).$packet), 8, 16)) {
                 Logger::log('msg_key mismatch!', Logger::ERROR);
                 continue;
             }
@@ -420,7 +420,8 @@ final class Endpoint
     public function write(string $payload): bool
     {
         $this->connectFuture?->getFuture()?->await();
-        if ($this->socket === null) {
+        $socket = $this->socket;
+        if ($socket === null) {
             return false;
         }
         $plaintext = pack('v', \strlen($payload)).$payload;
@@ -429,18 +430,23 @@ final class Endpoint
             $padding += 16;
         }
         $plaintext .= Tools::random($padding);
-        $message_key = substr(hash('sha256', substr($this->authKey, 88 + ($this->creator ? 0 : 8), 32).$plaintext, true), 8, 16);
+        $message_key = substr(Crypt::sha256(substr($this->authKey, 88 + ($this->creator ? 0 : 8), 32).$plaintext), 8, 16);
         [$aes_key, $aes_iv] = Crypt::kdf($message_key, $this->authKey, $this->creator);
         $payload = $message_key.Crypt::igeEncrypt($plaintext, $aes_key, $aes_iv);
 
+        if ($socket !== $this->socket) {
+            return false;
+        }
         if ($this->handler->peerVersion < 9 || $this->reflector) {
             $payload = $this->peerTag.$payload;
         }
 
         try {
-            $this->socket->getWriteBuffer(\strlen($payload))->bufferWrite($payload);
+            $socket->getWriteBuffer(\strlen($payload))->bufferWrite($payload);
         } catch (ClosedException) {
-            $this->socket = null;
+            if ($this->socket === $socket) {
+                $this->socket = null;
+            }
             return false;
         }
         return true;

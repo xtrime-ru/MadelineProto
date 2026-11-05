@@ -93,6 +93,12 @@ class MTProtoOutgoingMessage extends MTProtoMessage
     private int $tries = 0;
 
     private ?string $checkTimer = null;
+    /**
+     * The socket whose room in the file window of its DC this file request holds until it is answered (see
+     * DataCenterConnection::waitGetFileConnection()), and whether it was written already.
+     */
+    private ?Connection $fileRoom = null;
+    private bool $fileRoomWritten = false;
     private readonly ?string $cancelSubscription;
 
     /**
@@ -205,10 +211,48 @@ class MTProtoOutgoingMessage extends MTProtoMessage
         $this->tries++;
     }
     /**
+     * Hold the room of this file request in the file window of the DC of $connection until it is answered.
+     */
+    public function holdFileRoom(Connection $connection): void
+    {
+        $this->fileRoom = $connection;
+    }
+    /**
+     * Move the room this file request holds to $connection, which it is sent on now (instead of the socket it got room
+     * on: a socket closed for good, or replaced by a reconnection of the whole DC).
+     *
+     * Left on the previous socket, it was counted on a socket no longer of the DC, letting more requests in than the
+     * file window of the DC while it is in flight.
+     */
+    public function moveFileRoom(Connection $connection): void
+    {
+        $room = $this->fileRoom;
+        if ($room === null || $room === $connection) {
+            return;
+        }
+        $shared = $room->getShared();
+        if ($shared === $connection->getShared()) {
+            $room->fileRequests--;
+            $connection->fileRequests++;
+            $this->fileRoom = $connection;
+            return;
+        }
+        // Sent to another DC: the room was in the window of the previous one.
+        $this->fileRoom = null;
+        if (!$this->fileRoomWritten) {
+            $shared->fileRequestSent();
+        }
+        $shared->fileRequestDone($room, false);
+    }
+    /**
      * Signal that the message was sent.
      */
     public function sent(bool $pending = true): void
     {
+        if ($this->fileRoom !== null && !$this->fileRoomWritten) {
+            $this->fileRoomWritten = true;
+            $this->fileRoom->getShared()->fileRequestSent();
+        }
         if ($pending) {
             if ($this->unencrypted) {
                 $this->connection->unencrypted_new_outgoing[$this->getMsgId()] = $this;
@@ -278,6 +322,7 @@ class MTProtoOutgoingMessage extends MTProtoMessage
         }
         $this->setMsgId(null);
         $this->setSeqNo(null);
+        $this->container = null;
         return true;
     }
     private function check(): void
@@ -295,8 +340,14 @@ class MTProtoOutgoingMessage extends MTProtoMessage
                 $self->get()?->check();
             }
         );
-
-        if ($this->msgId === null) {
+        $this->requestState();
+    }
+    /**
+     * Ask the server for the state of this message with the next msgs_state_req.
+     */
+    public function requestState(): void
+    {
+        if ($this->state & self::STATE_REPLIED || $this->msgId === null) {
             return;
         }
         if ($this->unencrypted) {
@@ -356,6 +407,12 @@ class MTProtoOutgoingMessage extends MTProtoMessage
         $this->body = null;
 
         $this->state |= self::STATE_REPLIED;
+        if ($this->fileRoom !== null) {
+            $room = $this->fileRoom;
+            $this->fileRoom = null;
+            // Errors (FLOOD_WAITs included) are closures returning the exception.
+            $room->getShared()->fileRequestDone($room, !$result instanceof Closure);
+        }
         $this->cancellation?->unsubscribe($this->cancelSubscription);
         if ($this->resultDeferred) { // Sometimes can get an RPC error for constructors
             $promise = $this->resultDeferred;

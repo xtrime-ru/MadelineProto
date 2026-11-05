@@ -18,13 +18,18 @@ namespace danog\MadelineProto\GroupCall\Rtmp;
 
 use Amp\Cancellation;
 use Amp\DeferredFuture;
+use Amp\Dns\DnsException;
+use Amp\Dns\DnsRecord;
 use Amp\Socket\ClientTlsContext;
 use Amp\Socket\ConnectContext;
+use Amp\Socket\ResourceSocket;
 use Amp\Socket\Socket;
 use danog\MadelineProto\Exception;
+use danog\MadelineProto\RtmpServers;
 use Revolt\EventLoop;
 use Throwable;
 
+use function Amp\Dns\resolve;
 use function Amp\Socket\connect;
 
 /**
@@ -61,6 +66,13 @@ final class RtmpClient
     /** The size of the chunks we send: fewer chunk headers than the default 128 bytes. */
     private const OUTGOING_CHUNK_SIZE = 4096;
 
+    /**
+     * The most a single write of the socket sends: a whole message, keyframes included. amphp's default
+     * (8 KiB) splits a message into one TLS record and one syscall per 8 KiB, the rest of each waiting for
+     * the socket to be writable again.
+     */
+    private const SOCKET_CHUNK_SIZE = 256 * 1024;
+
     private int $outgoingChunkSize = 128;
     private int $incomingChunkSize = 128;
     private int $windowAckSize = 2500000;
@@ -88,7 +100,7 @@ final class RtmpClient
     /** The last onStatus the server sent after accepting the stream, if any. */
     private ?string $lastStatus = null;
 
-    private function __construct(private readonly Socket $socket, private readonly string $key)
+    private function __construct(private readonly Socket $socket, #[\SensitiveParameter] private readonly string $key)
     {
         $this->closedDeferred = new DeferredFuture;
     }
@@ -104,12 +116,14 @@ final class RtmpClient
     /**
      * Connect to an RTMP(S) server and start publishing a stream.
      *
-     * @param string $url The URL of the RTMP application, e.g. `rtmps://dc4-1.rtmp.t.me/s/`.
-     * @param string $key The stream key.
+     * @param string $url        The URL of the RTMP application, e.g. `rtmps://dc4-1.rtmp.t.me/s/`.
+     * @param string $key        The stream key.
+     * @param RtmpServers $servers Which servers it may connect to, see {@see self::checkServer()}.
      *
-     * @throws Exception If the server refuses the stream.
+     * @throws Exception            If the server refuses the stream.
+     * @throws RtmpAddressException If the server isn't one of $servers.
      */
-    public static function publish(string $url, string $key, ?Cancellation $cancellation = null): self
+    public static function publish(string $url, #[\SensitiveParameter] string $key, ?Cancellation $cancellation = null, RtmpServers $servers = RtmpServers::Any): self
     {
         $parts = parse_url($url);
         if (!isset($parts['scheme'], $parts['host']) || !\in_array($parts['scheme'], ['rtmp', 'rtmps'], true)) {
@@ -123,7 +137,16 @@ final class RtmpClient
         if ($tls) {
             $context = $context->withTlsContext(new ClientTlsContext($host));
         }
-        $socket = connect("tcp://$host:$port", $context, $cancellation);
+        // Connected to the address that was checked: the name isn't resolved again in between.
+        $address = self::checkServer($host, $servers, $cancellation);
+        if (str_contains($address, ':')) {
+            $address = "[$address]";
+        }
+        $socket = connect("tcp://$address:$port", $context, $cancellation);
+        if ($socket instanceof ResourceSocket && \is_resource($resource = $socket->getResource())) {
+            // The old wrapper only lets go of the resource (nothing was read or written yet).
+            $socket = ResourceSocket::fromClientSocket($resource, $context->getTlsContext(), self::SOCKET_CHUNK_SIZE);
+        }
         if ($tls) {
             $socket->setupTls($cancellation);
         }
@@ -151,6 +174,94 @@ final class RtmpClient
             throw $e;
         }
         return $client;
+    }
+
+    /**
+     * The address to connect to for a host, if it's on the internet: every address its name resolves to must be global
+     * (no loopback, private, link-local, shared or reserved address), so that whoever chooses the URL can't make us
+     * connect into our network. IPv4 if possible: not every network has IPv6.
+     *
+     * @throws RtmpAddressException If it isn't.
+     */
+    public static function checkServer(string $host, RtmpServers $servers, ?Cancellation $cancellation = null): string
+    {
+        if ($servers === RtmpServers::Any) {
+            return $host;
+        }
+        if ($servers === RtmpServers::Telegram && !str_ends_with(strtolower($host), '.rtmp.t.me')) {
+            throw new RtmpAddressException("$host is not a Telegram RTMP server (*.rtmp.t.me)");
+        }
+        return self::resolvePublic($host, $cancellation);
+    }
+
+    /**
+     * The address of a host on the internet, see {@see RtmpServers::Internet}.
+     *
+     * @throws RtmpAddressException If it isn't.
+     */
+    public static function resolvePublic(string $host, ?Cancellation $cancellation = null): string
+    {
+        $host = trim($host, '[]');
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            $addresses = [$host];
+        } else {
+            try {
+                $addresses = array_map(static fn (DnsRecord $record): string => $record->getValue(), resolve($host, cancellation: $cancellation));
+            } catch (DnsException $e) {
+                throw new RtmpAddressException("Could not resolve $host: {$e->getMessage()}", 0, $e);
+            }
+        }
+        if ($addresses === []) {
+            throw new RtmpAddressException("Could not resolve $host");
+        }
+        foreach ($addresses as $address) {
+            if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) === false || self::embedsIpv4($address)) {
+                throw new RtmpAddressException("$host is not on the internet: it resolves to $address");
+            }
+        }
+        foreach ($addresses as $address) {
+            if (!str_contains($address, ':')) {
+                return $address;
+            }
+        }
+        return $addresses[0];
+    }
+
+    /**
+     * IPv6 prefixes that embed an IPv4 address, which may not be global: IPv4-mapped (::ffff:0:0/96), IPv4-compatible
+     * (::/96), NAT64 (64:ff9b::/96, 64:ff9b:1::/48), 6to4 (2002::/16), Teredo (2001::/32). As prefix => bits.
+     */
+    private const IPV4_EMBEDDING_PREFIXES = [
+        '::ffff:0:0' => 96,
+        '::' => 96,
+        '64:ff9b::' => 96,
+        '64:ff9b:1::' => 48,
+        '2002::' => 16,
+        '2001::' => 32,
+    ];
+
+    /**
+     * Whether an IPv6 address embeds an IPv4 one, see {@see self::IPV4_EMBEDDING_PREFIXES}: refused rather than
+     * checked, as where it leads depends on the network.
+     */
+    private static function embedsIpv4(string $address): bool
+    {
+        if (!str_contains($address, ':')) {
+            return false;
+        }
+        $binary = inet_pton($address);
+        if ($binary === false) {
+            return true;
+        }
+        foreach (self::IPV4_EMBEDDING_PREFIXES as $prefix => $bits) {
+            $prefix = inet_pton($prefix);
+            \assert($prefix !== false);
+            $bytes = intdiv($bits, 8);
+            if (substr($binary, 0, $bytes) === substr($prefix, 0, $bytes)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -18,6 +18,7 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto;
 
+use Amp\ByteStream\ReadableIterableStream;
 use Amp\ByteStream\ReadableStream;
 use Amp\ByteStream\WritableStream;
 use Amp\Cancellation;
@@ -33,6 +34,7 @@ use Webmozart\Assert\Assert;
 use function Amp\async;
 use function Amp\ByteStream\getStderr;
 use function Amp\ByteStream\pipe;
+use function Amp\ByteStream\splitLines;
 use function Amp\File\openFile;
 use function count;
 
@@ -400,9 +402,39 @@ final class Ogg
                 ->ignore()
                 ->finally($proc->getStdin()->close(...));
         }
-        async(pipe(...), $proc->getStderr(), getStderr(), $cancellation)->ignore();
-        self::convertWav($proc->getStdout(), $oggOut, $cancellation);
+        // Forwarded to our stderr, its last lines kept to explain a failure.
+        $errors = [];
+        $stderr = async(static function () use ($proc, &$errors, $cancellation): void {
+            $out = getStderr();
+            foreach (splitLines($proc->getStderr(), $cancellation) as $line) {
+                $out->write("$line\n");
+                $errors[] = $line;
+                if (\count($errors) > self::FFMPEG_ERROR_LINES) {
+                    array_shift($errors);
+                }
+            }
+        });
+        $stderr->ignore();
+        $stdout = $proc->getStdout();
+        $first = $stdout->read($cancellation);
+        if ($first === null) {
+            // ffmpeg couldn't read the input (not media, unreachable...): its exit code and error, not the WAV
+            // parser's complaint about an empty file.
+            $code = $proc->join($cancellation);
+            $stderr->await($cancellation);
+            $what = $in instanceof ReadableStream ? 'the stream' : $inFile;
+            throw new AssertionError("ffmpeg could not convert $what (exit code $code): ".trim(implode("\n", $errors)));
+        }
+        self::convertWav(new ReadableIterableStream((static function () use ($first, $stdout, $cancellation): \Generator {
+            yield $first;
+            while (($chunk = $stdout->read($cancellation)) !== null) {
+                yield $chunk;
+            }
+        })()), $oggOut, $cancellation);
     }
+
+    /** How many of the last lines of ffmpeg's error output to report when it fails. */
+    private const FFMPEG_ERROR_LINES = 10;
 
     /**
      * Validate that the specified OGG OPUS file can be played directly by MadelineProto, without doing any conversion.
@@ -452,6 +484,30 @@ final class Ogg
         const char *opus_get_version_string(void);
     ';
     private static ?FFI $FFI = null;
+
+    /**
+     * libopus' encoder API, through FFI.
+     *
+     * @internal
+     *
+     * @throws Throwable If FFI or libopus is not available.
+     */
+    public static function libopus(): FFI
+    {
+        if (self::$FFI !== null) {
+            return self::$FFI;
+        }
+        foreach (['libopus.so', 'libopus.so.0'] as $k => $lib) {
+            try {
+                return self::$FFI = FFI::cdef(self::CDEF, $lib);
+            } catch (Throwable $e) {
+                if ($k) {
+                    throw $e;
+                }
+            }
+        }
+        throw new AssertionError('Unreachable');
+    }
     /**
      * Converts a file, URL, or stream in WAV format @ 48khz into an OGG audio stream suitable for consumption by MadelineProto's VoIP implementation.
      *
@@ -463,22 +519,7 @@ final class Ogg
         LocalFile|WritableStream $oggOut,
         ?Cancellation $cancellation = null
     ): void {
-        if (isset(self::$FFI)) {
-            $opus = self::$FFI;
-        } else {
-            foreach (['libopus.so', 'libopus.so.0'] as $k => $lib) {
-                try {
-                    $opus = FFI::cdef(self::CDEF, $lib);
-                    self::$FFI = $opus;
-                    break;
-                } catch (Throwable $e) {
-                    if ($k) {
-                        throw $e;
-                    }
-                }
-            }
-        }
-        \assert(isset($opus));
+        $opus = self::libopus();
         $checkErr = static function (int|CData $err) use ($opus): void {
             if ($err instanceof CData) {
                 $err = $err->cdata;

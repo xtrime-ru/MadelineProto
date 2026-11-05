@@ -26,6 +26,7 @@ use danog\MadelineProto\Tgcalls\E2E\FrameCryptor;
 use danog\MadelineProto\Tgcalls\E2E\FrameCryptorState;
 use danog\MadelineProto\Tgcalls\E2E\Verification;
 use PHPUnit\Framework\TestCase;
+use Webrtc\RTP\Crypto\DropFrameException;
 use Webrtc\RTP\Enum\MediaKind;
 
 /**
@@ -215,6 +216,58 @@ final class E2EConferenceTest extends TestCase
     }
 
     /**
+     * A non-participant only gets the last block of the chain (by its link): an empty chain starts from it, as tde2e's
+     * create_from_block() does, so that a rejoin after the first one is built on the right height.
+     */
+    public function testAnEmptyChainStartsFromTheLastBlock(): void
+    {
+        $this->requireCrypto();
+        [$seedA] = Crypto::generateKeyPair();
+        [$seedB] = Crypto::generateKeyPair();
+        [$seedC] = Crypto::generateKeyPair();
+        $alice = new ConferenceChain(1, $seedA);
+        $aPub = $alice->getSelfPublicKey();
+        $bPub = (new ConferenceChain(2, $seedB))->getSelfPublicKey();
+        $genesis = $alice->buildBlock(0, str_repeat("\0", 32), [
+            $alice->groupStateChange([[1, $aPub, ConferenceChain::PERMISSION_ADD_USERS | ConferenceChain::PERMISSION_REMOVE_USERS]]),
+        ]);
+        $alice->applyServerBlock($genesis['serialized']);
+        $second = $alice->buildBlock(1, $alice->getLastBlockHash(), [
+            $alice->groupStateChange([[1, $aPub, ConferenceChain::PERMISSION_ADD_USERS | ConferenceChain::PERMISSION_REMOVE_USERS], [2, $bPub, 0]]),
+        ]);
+        $alice->applyServerBlock($second['serialized']);
+
+        $carol = new ConferenceChain(3, $seedC);
+        $this->assertTrue($carol->applyServerBlock($second['serialized']));
+        $this->assertSame(1, $carol->getHeight());
+        $this->assertSame($alice->getLastBlockHash(), $carol->getLastBlockHash());
+        $this->assertSame([1, 2], array_keys($carol->getParticipants()));
+    }
+
+    /**
+     * A rejoin replays the chain with a fresh key: a shared key addressed to an earlier key of ours isn't for us. Tried
+     * with the fresh key, it threw, the block wasn't applied, and the rejoin's block was rejected as stale for good.
+     */
+    public function testASharedKeyForAnEarlierKeyOfOursIsSkipped(): void
+    {
+        $this->requireCrypto();
+        [$oldSeed] = Crypto::generateKeyPair();
+        [$newSeed] = Crypto::generateKeyPair();
+        $before = new ConferenceChain(1, $oldSeed);
+        $oldPub = $before->getSelfPublicKey();
+        $built = $before->buildBlock(0, str_repeat("\0", 32), [
+            $before->groupStateChange([[1, $oldPub, ConferenceChain::PERMISSION_ADD_USERS | ConferenceChain::PERMISSION_REMOVE_USERS]]),
+            ['_' => 'e2e.chain.changeSetSharedKey', 'shared_key' => $before->buildSharedKey(random_bytes(32), [[1, $oldPub]])],
+        ]);
+
+        $rejoined = new ConferenceChain(1, $newSeed);
+        $rejoined->applyServerBlock($built['serialized']);
+
+        $this->assertSame(0, $rejoined->getHeight(), 'The block is applied');
+        $this->assertNull($rejoined->getGroupKey(), 'Its key is not ours any more');
+    }
+
+    /**
      * Removing a participant drops them from the group state and rekeys: the remaining members share
      * a new key that the removed member's chain never receives.
      */
@@ -382,7 +435,9 @@ final class E2EConferenceTest extends TestCase
     {
         $this->requireCrypto();
         [$senderSeed, $senderPublic] = Crypto::generateKeyPair();
-        $epoch = ['hash' => random_bytes(32), 'secret' => random_bytes(32)];
+        // Not random: a block hash starting with 0x01 puts a start code in the header of every H.264 packet (see
+        // testAnEpochWithAStartCodeInTheHeaderDropsTheH264Frames), which failed this test once in 256 runs.
+        $epoch = ['hash' => str_repeat("\xaa", 32), 'secret' => random_bytes(32)];
         $secrets = [$epoch['hash'] => $epoch['secret']];
         $sender = new FrameCryptor(self::keyProvider($senderSeed, [$epoch], null));
         $receiver = new FrameCryptor(self::keyProvider(random_bytes(32), [$epoch], [5 => $senderPublic]));
@@ -421,6 +476,22 @@ final class E2EConferenceTest extends TestCase
         $this->assertFalse(strpos($wire, "\x00\x00\x01", $prefixLen - 2), 'no start code in the ciphertext');
         // What the receiver decrypts is the widened frame, i.e. what a WebRTC depacketizer rebuilds.
         $this->assertSame($widened, $receiver->decryptFrame(MediaKind::Video, 5, $wire));
+    }
+
+    /**
+     * The header of a packet (its epoch count, 01 00 00 00, then the block hashes) is the same for every attempt: with
+     * a block hash starting with 0x01 it holds a start code, and no H.264 frame can be sent during that epoch. The
+     * frames are dropped, as tgcalls does, instead of failing to send (which stopped the sender for good).
+     */
+    public function testAnEpochWithAStartCodeInTheHeaderDropsTheH264Frames(): void
+    {
+        $this->requireCrypto();
+        [$senderSeed] = Crypto::generateKeyPair();
+        $epoch = ['hash' => "\x01".random_bytes(31), 'secret' => random_bytes(32)];
+        $sender = new FrameCryptor(self::keyProvider($senderSeed, [$epoch], null));
+        $sender->setOutgoingVideoCodec('H264');
+        $this->expectException(DropFrameException::class);
+        $sender->encryptFrame(MediaKind::Video, 5, "\x00\x00\x01\x65\x88\x84\x00\x10".random_bytes(300));
     }
 
     public function testFrameCryptorRejectsReplay(): void

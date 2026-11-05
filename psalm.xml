@@ -15,6 +15,9 @@
     <enableExtensions>
         <extension name="ffi"/>
     </enableExtensions>
+    <stubs>
+        <file name="stubs/madeline_crypto.php" />
+    </stubs>
     <projectFiles>
         <directory name="src" />
         <ignoreFiles>

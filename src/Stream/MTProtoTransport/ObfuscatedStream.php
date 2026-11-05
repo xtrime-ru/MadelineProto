@@ -21,6 +21,8 @@ declare(strict_types=1);
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
 use danog\MadelineProto\Exception;
+
+use danog\MadelineProto\MTProtoTools\Crypt;
 use danog\MadelineProto\Stream\BufferedProxyStreamInterface;
 use danog\MadelineProto\Stream\Common\CtrStream;
 use danog\MadelineProto\Stream\ConnectionContext;
@@ -67,8 +69,8 @@ final class ObfuscatedStream extends CtrStream implements BufferedProxyStreamInt
         $key = substr($random, 8, 32);
         $keyRev = substr($reversed, 8, 32);
         if (isset($this->extra['secret'])) {
-            $key = hash('sha256', $key.$this->extra['secret'], true);
-            $keyRev = hash('sha256', $keyRev.$this->extra['secret'], true);
+            $key = Crypt::sha256($key.$this->extra['secret']);
+            $keyRev = Crypt::sha256($keyRev.$this->extra['secret']);
         }
         $iv = substr($random, 40, 16);
         $ivRev = substr($reversed, 40, 16);
@@ -101,7 +103,7 @@ final class ObfuscatedStream extends CtrStream implements BufferedProxyStreamInt
      *
      * @psalm-pure
      */
-    public static function decodeSecret(string $secret): array
+    public static function decodeSecret(#[\SensitiveParameter] string $secret): array
     {
         if (\strlen($secret) !== 16) {
             $decoded = preg_match('/^(?:[a-f0-9]{2})+$/i', $secret)

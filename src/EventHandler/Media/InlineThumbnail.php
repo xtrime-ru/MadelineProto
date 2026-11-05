@@ -19,6 +19,7 @@ namespace danog\MadelineProto\EventHandler\Media;
 use AssertionError;
 use danog\MadelineProto\Exception;
 use danog\MadelineProto\MTProto;
+use danog\MadelineProto\MTProtoTools\Crypt;
 use danog\MadelineProto\Tools;
 
 /**
@@ -133,7 +134,7 @@ final class InlineThumbnail extends AbstractThumbnail
      *
      * @return ?array{name: string, ext: string, mime: string, size: int, InputFileLocation: array, data: string}
      */
-    public static function unpackFileId(string $fileId, string $key): ?array
+    public static function unpackFileId(string $fileId, #[\SensitiveParameter] string $key): ?array
     {
         if (!self::isFileId($fileId)) {
             return null;
@@ -169,20 +170,20 @@ final class InlineThumbnail extends AbstractThumbnail
      *
      * @internal
      */
-    public static function getUniqueFileId(string $fileId, string $key): ?string
+    public static function getUniqueFileId(string $fileId, #[\SensitiveParameter] string $key): ?string
     {
         $info = self::unpackFileId($fileId, $key);
         return $info === null ? null : self::FILE_ID_PREFIX.self::hash($info['data']);
     }
 
-    private static function mac(string $payload, string $key): string
+    private static function mac(string $payload, #[\SensitiveParameter] string $key): string
     {
-        return substr(hash_hmac('sha256', $payload, $key, true), 0, self::MAC_LENGTH);
+        return substr(Crypt::hmacSha256($payload, $key), 0, self::MAC_LENGTH);
     }
 
     private static function hash(string $contents): string
     {
-        return bin2hex(substr(hash('sha256', $contents, true), 0, 16));
+        return bin2hex(substr(Crypt::sha256($contents), 0, 16));
     }
 
     /** @return array{string, string} */

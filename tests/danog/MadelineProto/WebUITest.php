@@ -314,6 +314,49 @@ final class WebUITest extends TestCase
         }
     }
 
+    public function testTheSessionToLogInIsChosenOnTheLoginPages(): void
+    {
+        $uri = $_SERVER['REQUEST_URI'] ?? null;
+        $_SERVER['REQUEST_URI'] = '/index.php?bot=a%20b&madelineSession=1&getQrCode';
+        try {
+            // A single session to log in: nothing to choose
+            WebUI::setSessions(['1' => 'b.madeline'], '1');
+            self::assertSame([], WebUI::addSessions(self::loginPage())->sessions);
+
+            WebUI::setSessions(['named' => 'named', '1' => 'b.madeline', 'x"><b>' => 'x"><b>'], '1');
+            $page = WebUI::addSessions(self::loginPage());
+            $html = WebUI::render(new Templates, $page);
+            self::assertSame(1, preg_match('~<form method="get" class="sessions" action="/index.php">(.*?)</form>~s', $html, $form));
+            // The other parameters of the page are kept, as is; not the one it sets, nor those of the web UI
+            self::assertStringContainsString('<input type="hidden" name="bot" value="a b">', $form[1]);
+            self::assertStringNotContainsString('getQrCode', $form[1]);
+            self::assertSame(1, substr_count($form[1], 'name="madelineSession"'));
+            self::assertSame(3, preg_match_all('~<option~', $form[1]));
+            self::assertStringContainsString('<option value="1" selected>b.madeline</option>', $form[1]);
+            self::assertStringContainsString('<option value="x&quot;&gt;&lt;b&gt;">x&quot;&gt;&lt;b&gt;</option>', $form[1]);
+
+            // In order, as a list (a JSON object would be reordered in the browser)
+            $state = WebUI::getStateArray($page);
+            self::assertSame([
+                'param' => 'madelineSession',
+                'label' => 'Session',
+                'selected' => '1',
+                'options' => [['key' => 'named', 'name' => 'named'], ['key' => '1', 'name' => 'b.madeline'], ['key' => 'x"><b>', 'name' => 'x"><b>']],
+            ], json_decode(json_encode($state['page'], JSON_THROW_ON_ERROR), true)['sessions']);
+
+            WebUI::setSessions([], null);
+            self::assertNull(json_decode(json_encode(WebUI::addSessions(self::loginPage()), JSON_THROW_ON_ERROR), true)['sessions']);
+            self::assertStringNotContainsString('class="sessions"', WebUI::render(new Templates, WebUI::addSessions(self::loginPage())));
+        } finally {
+            WebUI::setSessions([], null);
+            if ($uri === null) {
+                unset($_SERVER['REQUEST_URI']);
+            } else {
+                $_SERVER['REQUEST_URI'] = $uri;
+            }
+        }
+    }
+
     public function testSessionsOfTheLegacyTemplatesStillLoad(): void
     {
         $deprecations = [];
@@ -428,6 +471,32 @@ final class WebUITest extends TestCase
         self::assertSame('Sorry, too many tries. Please try again later.', $error->invoke(null, '{"text":"Sorry, too many tries. Please try again later.","field":false}'));
         self::assertSame('ERROR', $error->invoke(null, "ERROR\n"));
         self::assertSame('Invalid confirmation code!', $error->invoke(null, 'Invalid confirmation code!'));
+        // What MadelineProto says itself is in the language of the session (my.telegram.org's own texts are English)
+        self::assertSame('Empty response from my.telegram.org', $error->invoke(null, ''));
+        Lang::$current_lang = Lang::$lang['it'];
+        self::assertSame('Risposta vuota da my.telegram.org', $error->invoke(null, ''));
+    }
+
+    public function testEveryStringUsedIsInTheLanguageFiles(): void
+    {
+        $english = json_decode((string) file_get_contents(__DIR__.'/../../../langs/en.json'), true, flags: JSON_THROW_ON_ERROR);
+        $used = [];
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(__DIR__.'/../../../src', \FilesystemIterator::SKIP_DOTS));
+        foreach ($files as $file) {
+            if (!preg_match('/\.(php|phtml)$/', $file->getFilename()) || $file->getFilename() === 'Lang.php') {
+                continue;
+            }
+            $code = (string) file_get_contents($file->getPathname());
+            preg_match_all('/Lang::\$(?:current_lang|lang\[\'en\'\])\[\'([A-Za-z0-9_.]+)\'\]|->t\(\'([A-Za-z0-9_.]+)\'|Template::translate\(\'([A-Za-z0-9_.]+)\'/', $code, $matches, PREG_SET_ORDER);
+            foreach ($matches as $match) {
+                $key = $match[1] ?: ($match[2] ?? '') ?: ($match[3] ?? '');
+                $used[$key][] = basename($file->getPathname());
+            }
+        }
+        self::assertNotEmpty($used);
+        foreach ($used as $key => $where) {
+            self::assertArrayHasKey($key, $english, "$key, used in ".implode(', ', array_unique($where)).", is not in langs/en.json");
+        }
     }
 
     public function testMyTelegramOrgStateSurvivesSerialization(): void

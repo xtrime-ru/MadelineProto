@@ -33,7 +33,7 @@ final class Conversion
      *
      * @param array<int, string> $authorization Authorization info, DC ID => auth key
      */
-    public static function importAuthorization(array $authorization, int $main_dc_id, string $session, ?SettingsAbstract $settings = null): API
+    public static function importAuthorization(#[\SensitiveParameter] array $authorization, int $main_dc_id, string $session, ?SettingsAbstract $settings = null): API
     {
         $settingsFull = new Settings;
         if ($settings) {
@@ -56,7 +56,7 @@ final class Conversion
      * @param string $new_session MadelineProto session directory to create
      * @param SettingsAbstract|null $settings Settings
      */
-    public static function telethon(string $session, string $new_session, ?SettingsAbstract $settings = null): API
+    public static function telethon(#[\SensitiveParameter] string $session, string $new_session, ?SettingsAbstract $settings = null): API
     {
         if (!\extension_loaded('sqlite3')) {
             throw Exception::extension('sqlite3');
@@ -86,7 +86,7 @@ final class Conversion
      * @param string $new_session MadelineProto session directory to create
      * @param SettingsAbstract|null $settings Settings
      */
-    public static function pyrogram(string $session, string $new_session, ?SettingsAbstract $settings = null): API
+    public static function pyrogram(#[\SensitiveParameter] string $session, string $new_session, ?SettingsAbstract $settings = null): API
     {
         set_error_handler(['\\danog\\MadelineProto\\Exception', 'ExceptionErrorHandler']);
         if (!\extension_loaded('sqlite3')) {
@@ -109,7 +109,7 @@ final class Conversion
         return self::importAuthorization([$session['dc_id'] => $session['auth_key']], $session['dc_id'], $new_session, $settings);
     }
 
-    public static function zerobias(string|array $session, string $new_session, ?SettingsAbstract $settings = null): API
+    public static function zerobias(#[\SensitiveParameter] string|array $session, string $new_session, ?SettingsAbstract $settings = null): API
     {
         set_error_handler(['\\danog\\MadelineProto\\Exception', 'ExceptionErrorHandler']);
         if (\is_string($session)) {
@@ -135,7 +135,7 @@ final class Conversion
      * @param string $key Data name, if Telegram Desktop is started with -key
      * @param int|null $account Index of the account to convert, the active one by default
      */
-    public static function tdesktop(string $session, string $new_session, ?SettingsAbstract $settings = null, string $passcode = '', string $key = 'data', ?int $account = null): API
+    public static function tdesktop(string $session, string $new_session, ?SettingsAbstract $settings = null, #[\SensitiveParameter] string $passcode = '', string $key = 'data', ?int $account = null): API
     {
         $authorization = self::parseTdesktop($session, $passcode, $key, $account);
         return self::importAuthorization($authorization['auth_keys'], $authorization['main_dc_id'], $new_session, $settings);
@@ -161,7 +161,7 @@ final class Conversion
      *
      * @return array{main_dc_id: int, user_id: int, auth_keys: array<int, string>}
      */
-    public static function parseTdesktop(string $session, string $passcode = '', string $key = 'data', ?int $account = null): array
+    public static function parseTdesktop(string $session, #[\SensitiveParameter] string $passcode = '', string $key = 'data', ?int $account = null): array
     {
         if (basename($session) !== 'tdata') {
             $session .= DIRECTORY_SEPARATOR.'tdata';
@@ -326,7 +326,7 @@ final class Conversion
      */
     private static function tdesktopFilePart(string $name): string
     {
-        return strtoupper(strrev(bin2hex(strrev(substr(md5($name, true), 0, 8)))));
+        return strtoupper(strrev(bin2hex(strrev(substr(Crypt::md5($name), 0, 8)))));
     }
 
     /**
@@ -349,7 +349,7 @@ final class Conversion
             $versionBytes = substr($contents, 4, 4);
             Logger::log('TDesktop version: '.unpack('V', $versionBytes)[1]);
             $data = substr($contents, 8, -16);
-            if (md5($data.pack('V', \strlen($data)).$versionBytes.'TDF$', true) !== substr($contents, -16)) {
+            if (Crypt::md5($data.pack('V', \strlen($data)).$versionBytes.'TDF$') !== substr($contents, -16)) {
                 Logger::log("Wrong MD5 in $file", Logger::ERROR);
                 continue;
             }
@@ -391,7 +391,7 @@ final class Conversion
     /**
      * Decrypt data encrypted with a local key, as tdesktop's DecryptLocal does.
      */
-    private static function tdesktopDecrypt(string $encrypted, string $key): string
+    private static function tdesktopDecrypt(string $encrypted, #[\SensitiveParameter] string $key): string
     {
         if (\strlen($encrypted) <= 16 || \strlen($encrypted) % 16) {
             throw new Exception('Wrong length of Telegram Desktop encrypted data!');
@@ -399,7 +399,7 @@ final class Conversion
         $message_key = substr($encrypted, 0, 16);
         [$aes_key, $aes_iv] = Crypt::oldKdf($message_key, $key, false);
         $decrypted = Crypt::igeDecrypt(substr($encrypted, 16), $aes_key, $aes_iv);
-        if ($message_key !== substr(sha1($decrypted, true), 0, 16)) {
+        if ($message_key !== substr(Crypt::sha1($decrypted), 0, 16)) {
             throw new SecurityException('msg_key mismatch: wrong passcode?');
         }
         $length = unpack('V', $decrypted)[1];
@@ -414,7 +414,7 @@ final class Conversion
      */
     private static function tdesktopCreateLocalKey(string $passcode, string $salt): string
     {
-        $hash = hash('sha512', $salt.$passcode.$salt, true);
+        $hash = Crypt::sha512($salt.$passcode.$salt);
         return openssl_pbkdf2($hash, $salt, 256, $passcode === '' ? 1 : 100000, 'sha512');
     }
 

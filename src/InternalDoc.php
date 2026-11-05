@@ -21,11 +21,16 @@ use danog\MadelineProto\Broadcast\Action;
 use danog\MadelineProto\Broadcast\Progress;
 use danog\MadelineProto\Broadcast\Status;
 use danog\MadelineProto\EventHandler\Action\Cancel;
+use danog\MadelineProto\EventHandler\Action\UploadDocument;
+use danog\MadelineProto\EventHandler\Action\UploadPhoto;
+use danog\MadelineProto\EventHandler\Action\UploadVideo;
 use danog\MadelineProto\EventHandler\Attributes\Handler;
 use danog\MadelineProto\EventHandler\Calls\AbstractGroupCall;
 use danog\MadelineProto\EventHandler\Calls\AbstractGroupCallParticipant;
 use danog\MadelineProto\EventHandler\Calls\GroupCall;
 use danog\MadelineProto\EventHandler\Calls\PrivateCall;
+use danog\MadelineProto\EventHandler\Calls\RtmpStream;
+use danog\MadelineProto\EventHandler\Delete;
 use danog\MadelineProto\EventHandler\Keyboard;
 use danog\MadelineProto\EventHandler\Media;
 use danog\MadelineProto\EventHandler\Media\Audio;
@@ -37,6 +42,7 @@ use danog\MadelineProto\EventHandler\Media\Thumbnail;
 use danog\MadelineProto\EventHandler\Media\Video;
 use danog\MadelineProto\EventHandler\Media\Voice;
 use danog\MadelineProto\EventHandler\Message;
+use danog\MadelineProto\EventHandler\Message\Entities\Bold;
 use danog\MadelineProto\EventHandler\Message\Entities\Code;
 use danog\MadelineProto\EventHandler\Message\Entities\Email;
 use danog\MadelineProto\EventHandler\Message\Entities\Mention;
@@ -46,8 +52,19 @@ use danog\MadelineProto\EventHandler\Message\Entities\Pre;
 use danog\MadelineProto\EventHandler\Message\Entities\Spoiler;
 use danog\MadelineProto\EventHandler\Message\Entities\Unknown;
 use danog\MadelineProto\EventHandler\Message\Entities\Url;
+use danog\MadelineProto\EventHandler\Message\Rich\Block;
+use danog\MadelineProto\EventHandler\Message\Rich\Block\Buttons;
+use danog\MadelineProto\EventHandler\Message\Rich\Block\Map;
+use danog\MadelineProto\EventHandler\Message\Rich\Block\Paragraph;
+use danog\MadelineProto\EventHandler\Message\Rich\Button\Callback;
+use danog\MadelineProto\EventHandler\Message\Rich\Button\Disabled;
+use danog\MadelineProto\EventHandler\Message\Rich\Caption;
+use danog\MadelineProto\EventHandler\Message\Rich\Text\Date;
+use danog\MadelineProto\EventHandler\Message\Rich\Text\Plain;
+use danog\MadelineProto\EventHandler\Message\RichMessage;
 use danog\MadelineProto\EventHandler\Participant;
 use danog\MadelineProto\EventHandler\Participant\Admin;
+use danog\MadelineProto\EventHandler\Participant\Left;
 use danog\MadelineProto\EventHandler\Participant\Member;
 use danog\MadelineProto\EventHandler\Pinned;
 use danog\MadelineProto\EventHandler\Story\Story;
@@ -268,7 +285,7 @@ abstract class InternalDoc
      *
      * @param string $token Bot token
      */
-    final public function botLogin(string $token): ?array
+    final public function botLogin(#[\SensitiveParameter] string $token): ?array
     {
         return $this->wrapper->getAPI()->botLogin($token);
     }
@@ -430,11 +447,20 @@ abstract class InternalDoc
         \danog\MadelineProto\Tools::closeConnection($message);
     }
     /**
+     * Stop publishing to an RTMP stream for good.
+     *
+     * See {@see RtmpStream::close()}.
+     */
+    final public function closeRtmpStream(int $id): void
+    {
+        $this->wrapper->getAPI()->closeRtmpStream($id);
+    }
+    /**
      * Complete 2FA login.
      *
      * @param string $password Password
      */
-    final public function complete2faLogin(string $password): array
+    final public function complete2faLogin(#[\SensitiveParameter] string $password): array
     {
         return $this->wrapper->getAPI()->complete2faLogin($password);
     }
@@ -443,7 +469,7 @@ abstract class InternalDoc
      *
      * @param string $code Login code
      */
-    final public function completePhoneLogin(string $code): array
+    final public function completePhoneLogin(#[\SensitiveParameter] string $code): array
     {
         return $this->wrapper->getAPI()->completePhoneLogin($code);
     }
@@ -1329,6 +1355,29 @@ abstract class InternalDoc
         return $this->wrapper->getAPI()->getPwrChat($id, $fullfetch);
     }
     /**
+     * What we publish to an RTMP server with a URL and stream key, if anything.
+     *
+     * See {@see self::startRtmpStream()}.
+     *
+     * @param string  $url The URL of the RTMP application, or, without `$key`, the URL followed by the stream key.
+     * @param ?string $key The stream key.
+     */
+    final public function getRtmpStream(string $url, #[\SensitiveParameter] ?string $key = null): ?\danog\MadelineProto\EventHandler\Calls\RtmpStream
+    {
+        return $this->wrapper->getAPI()->getRtmpStream($url, $key);
+    }
+    /**
+     * What we publish to RTMP servers.
+     *
+     * See {@see self::startRtmpStream()}.
+     *
+     * @return array<int, RtmpStream>
+     */
+    final public function getRtmpStreams(): array
+    {
+        return $this->wrapper->getAPI()->getRtmpStreams();
+    }
+    /**
      * Get secret chat.
      *
      * @param array|int $chat Secret chat ID
@@ -1601,7 +1650,7 @@ abstract class InternalDoc
      * @param array<int, string> $authorization Authorization info
      * @param int                $mainDcID      Main DC ID
      */
-    final public function importAuthorization(array $authorization, int $mainDcID): array
+    final public function importAuthorization(#[\SensitiveParameter] array $authorization, int $mainDcID): array
     {
         return $this->wrapper->getAPI()->importAuthorization($authorization, $mainDcID);
     }
@@ -1728,6 +1777,24 @@ abstract class InternalDoc
     final public function isPremium(): bool
     {
         return $this->wrapper->getAPI()->isPremium();
+    }
+    /**
+     * Whether we are connected to the server of an RTMP stream right now.
+     *
+     * See {@see RtmpStream::isConnected()}.
+     */
+    final public function isRtmpStreamConnected(int $id): bool
+    {
+        return $this->wrapper->getAPI()->isRtmpStreamConnected($id);
+    }
+    /**
+     * Whether the file played to an RTMP stream is paused.
+     *
+     * See {@see RtmpStream::isPaused()}.
+     */
+    final public function isRtmpStreamPlayPaused(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): bool
+    {
+        return $this->wrapper->getAPI()->isRtmpStreamPlayPaused($id, $dest);
     }
     /**
      * Returns whether the current user is a bot.
@@ -2218,6 +2285,78 @@ abstract class InternalDoc
         return \danog\MadelineProto\Tools::rleEncode($string);
     }
     /**
+     * The file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::getCurrent()}.
+     */
+    final public function rtmpStreamGetCurrent(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): \danog\MadelineProto\RemoteUrl|\danog\MadelineProto\LocalFile|string|null
+    {
+        return $this->wrapper->getAPI()->rtmpStreamGetCurrent($id, $dest);
+    }
+    /**
+     * Pause the file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::pause()}.
+     */
+    final public function rtmpStreamPausePlay(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamPausePlay($id, $dest);
+    }
+    /**
+     * Play a file to an RTMP stream.
+     *
+     * See {@see RtmpStream::play()}.
+     */
+    final public function rtmpStreamPlay(int $id, \danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamPlay($id, $file, $dest);
+    }
+    /**
+     * Play a file to an RTMP stream, blocking until it has finished playing if a stream was passed.
+     *
+     * See {@see RtmpStream::playBlocking()}.
+     */
+    final public function rtmpStreamPlayBlocking(int $id, \danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamPlayBlocking($id, $file, $dest);
+    }
+    /**
+     * Set the files to play on loop to an RTMP stream while its playlist is empty.
+     *
+     * See {@see RtmpStream::playOnHold()}.
+     */
+    final public function rtmpStreamPlayOnHold(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera, \danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\Amp\ByteStream\ReadableStream ...$files): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamPlayOnHold($id, $dest, ...$files);
+    }
+    /**
+     * Resume the file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::resume()}.
+     */
+    final public function rtmpStreamResumePlay(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamResumePlay($id, $dest);
+    }
+    /**
+     * Skip to the next file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::skip()}.
+     */
+    final public function rtmpStreamSkipPlay(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamSkipPlay($id, $dest);
+    }
+    /**
+     * Stop playing all files to an RTMP stream, clearing its playlists.
+     *
+     * See {@see RtmpStream::stop()}.
+     */
+    final public function rtmpStreamStopPlay(int $id, \danog\MadelineProto\MediaDestination $dest = \danog\MadelineProto\MediaDestination::Camera): void
+    {
+        $this->wrapper->getAPI()->rtmpStreamStopPlay($id, $dest);
+    }
+    /**
      * Save the peer we join the video chats and livestreams of a group or channel as by default.
      *
      * @param string|int $peer   The group or channel.
@@ -2253,11 +2392,12 @@ abstract class InternalDoc
      * @param boolean                                                       $clearDraft              Clears the draft field
      * @param boolean                                                       $forceResend             Whether to forcefully resend the file, even if its type and name are the same.
      * @param ?Cancellation                                                  $cancellation            Cancellation.
+     * @param integer|string|null                                            $replyToPeer             Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendAudio(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?string $mimeType = null, ?int $duration = null, ?string $title = null, ?string $performer = null, ?int $ttl = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendAudio(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?string $mimeType = null, ?int $duration = null, ?string $title = null, ?string $performer = null, ?int $ttl = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendAudio($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $duration, $title, $performer, $ttl, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendAudio($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $duration, $title, $performer, $ttl, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Sends an updateCustomEvent update to the event handler.
@@ -2289,11 +2429,12 @@ abstract class InternalDoc
      * @param boolean                                                            $updateStickersetsOrder Whether to move used stickersets to top
      * @param boolean                                                            $forceResend            Whether to forcefully resend the file, even if its type and name are the same.
      * @param Cancellation                                                       $cancellation           Cancellation.
+     * @param integer|string|null                                                $replyToPeer            Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendDocument(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?string $mimeType = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendDocument(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?string $mimeType = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendDocument($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendDocument($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Sends a photo.
@@ -2317,11 +2458,12 @@ abstract class InternalDoc
      * @param boolean                                                       $updateStickersetsOrder Whether to move used stickersets to top
      * @param boolean                                                       $forceResend            Whether to forcefully resend the file, even if its type and name are the same.
      * @param Cancellation                                                  $cancellation           Cancellation.
+     * @param integer|string|null                                           $replyToPeer            Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendDocumentPhoto(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendDocumentPhoto(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendDocumentPhoto($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendDocumentPhoto($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Sends a gif.
@@ -2348,11 +2490,12 @@ abstract class InternalDoc
      * @param boolean                                                       $clearDraft              Clears the draft field
      * @param boolean                                                       $forceResend             Whether to forcefully resend the file, even if its type and name are the same.
      * @param ?Cancellation                                                  $cancellation            Cancellation.
+     * @param integer|string|null                                            $replyToPeer             Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendGif(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $duration = null, ?int $width = null, ?int $height = null, string $thumbSeek = '00:00:01.000', ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendGif(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $duration = null, ?int $width = null, ?int $height = null, string $thumbSeek = '00:00:01.000', ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendGif($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $duration, $width, $height, $thumbSeek, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendGif($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $duration, $width, $height, $thumbSeek, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Sends a message.
@@ -2371,10 +2514,11 @@ abstract class InternalDoc
      * @param boolean        $noWebpage              Set this flag to disable generation of the webpage preview
      * @param boolean        $updateStickersetsOrder Whether to move used stickersets to top
      * @param ?Cancellation  $cancellation           Cancellation
+     * @param integer|string|null $replyToPeer       Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      */
-    final public function sendMessage(string|int $peer, string $message, \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $noWebpage = false, bool $updateStickersetsOrder = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendMessage(string|int $peer, string $message, \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $noWebpage = false, bool $updateStickersetsOrder = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendMessage($peer, $message, $parseMode, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $noWebpage, $updateStickersetsOrder, $cancellation);
+        return $this->wrapper->getAPI()->sendMessage($peer, $message, $parseMode, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $noWebpage, $updateStickersetsOrder, $cancellation, $replyToPeer);
     }
     /**
      * Sends a message to all report peers (admins of the bot).
@@ -2416,11 +2560,96 @@ abstract class InternalDoc
      * @param boolean                                                       $updateStickersetsOrder Whether to move used stickersets to top
      * @param boolean                                                       $forceResend            Whether to forcefully resend the file, even if its type and name are the same.
      * @param Cancellation                                                  $cancellation           Cancellation.
+     * @param integer|string|null                                           $replyToPeer            Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendPhoto(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendPhoto(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, bool $spoiler = false, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendPhoto($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendPhoto($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $spoiler, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation, $replyToPeer);
+    }
+    /**
+     * Sends a [rich message](https://core.telegram.org/bots/api#sendrichmessage): structured text made of blocks (headings, paragraphs, lists, tables, quotes, media, buttons and so on).
+     *
+     * The message can be passed as:
+     * - Plain text (the default, sent as a single paragraph), or Markdown or HTML (with $parseMode), parsed by Telegram; media passed in $media can be embedded by ID, e.g. `![A cat](tg://photo?id=cat)` or `![A file](tg://document?id=file)` in Markdown.
+     * - A list of blocks: typed Block objects (`new Paragraph(new Bold('Hello'))`, see the EventHandler\Message\Rich\Block namespace), arrays in the format of the Bot API's [InputRichBlock](https://core.telegram.org/bots/api#inputrichblock) type, or raw MTProto PageBlock constructors.
+     * - A received RichMessage (`$message->richMessage`), to send it again.
+     * - A full Bot API [InputRichMessage](https://core.telegram.org/bots/api#inputrichmessage), or a raw MTProto InputRichMessage constructor.
+     *
+     * $parseMode only applies to string messages, and $media only to Markdown and HTML: passing them with other messages throws.
+     *
+     * Media in Bot API blocks and in $media can be Message or Media objects, bot API file IDs, raw photos and documents, or files to upload (LocalFile, RemoteUrl, ReadableStream or URLs), optionally wrapped in a Bot API InputMedia-like array (`['type' => 'video', 'media' => new LocalFile('video.mp4'), 'duration' => 10]`). Files in $media are uploaded with the type of the tg://photo, tg://video, tg://audio or tg://document link that references them, unless the wrapper specifies a type.
+     *
+     * @param integer|string           $peer         Destination peer or username.
+     * @param string|array|RichMessage $message      Rich message to send
+     * @param RichParseMode            $parseMode    How to parse a string $message: plain text (the default) is sent as a single paragraph, Markdown and HTML are parsed by Telegram.
+     * @param integer|null             $replyToMsgId ID of message to reply to.
+     * @param integer|null             $topMsgId     ID of thread where to send the message.
+     * @param array|null               $replyMarkup  Keyboard information.
+     * @param integer|string|null      $sendAs       Peer to send the message as.
+     * @param integer|null             $scheduleDate Schedule date.
+     * @param boolean                  $silent       Whether to send the message silently, without triggering notifications.
+     * @param boolean                  $noForwards   Only for bots, disallows further re-forwarding and saving of the messages, even if the destination chat doesn’t have [content protection](https://telegram.org/blog/protected-content-delete-by-date-and-more) enabled
+     * @param boolean                  $background   Send this message as background message
+     * @param boolean                  $clearDraft   Clears the draft field
+     * @param array                    $media        Media referenced by Markdown or HTML messages, as a map from ID (1-64 characters among A-Z, a-z, 0-9, _ and -) to file (a Message, Media, LocalFile, RemoteUrl, BotApiFileId or ReadableStream), or a list of Bot API InputRichMessageMedia objects.
+     * @param boolean                  $rtl          Whether the text is right-to-left
+     * @param boolean                  $noAutolink   Whether to skip the automatic detection of mentions, hashtags, URLs and so on
+     * @param ?Cancellation            $cancellation Cancellation
+     */
+    final public function sendRichMessage(string|int $peer, \danog\MadelineProto\EventHandler\Message\RichMessage|array|string $message, \danog\MadelineProto\RichParseMode $parseMode = \danog\MadelineProto\RichParseMode::TEXT, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, array $media =  [
+    ], bool $rtl = false, bool $noAutolink = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    {
+        return $this->wrapper->getAPI()->sendRichMessage($peer, $message, $parseMode, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $media, $rtl, $noAutolink, $cancellation);
+    }
+    /**
+     * Streams a partial [rich message](https://core.telegram.org/bots/api#sendrichmessagedraft) to a private chat while it is being generated (e.g. by an AI), see sendRichMessage for the supported formats.
+     *
+     * Call it again with the returned draft ID to update the draft, then send the complete message with sendRichMessage.
+     *
+     * Media must have already been uploaded (e.g. with uploadPhoto, uploadVideo, uploadDocument and so on).
+     *
+     * @param integer|string           $peer         Destination peer or username.
+     * @param string|array|RichMessage $message      Partial rich message
+     * @param RichParseMode            $parseMode    How to parse a string $message: plain text (the default) is sent as a single paragraph, Markdown and HTML are parsed by Telegram.
+     * @param array                    $media        Media referenced by Markdown or HTML messages, as a map from ID to file (a Message, Media or BotApiFileId: new files can't be uploaded).
+     * @param ?integer                 $draftId      ID of the draft to update (non-zero), if null a new draft ID is generated.
+     * @param boolean                  $canStop      Whether the user can stop the generation of the message
+     * @param boolean                  $keepOnStop   Whether the draft should be kept if the user stops the generation
+     * @param boolean                  $rtl          Whether the text is right-to-left
+     * @param boolean                  $noAutolink   Whether to skip the automatic detection of mentions, hashtags, URLs and so on
+     * @param integer|null             $topMsgId     ID of thread where to send the draft.
+     * @param ?Cancellation            $cancellation Cancellation
+     *
+     * @return integer The draft ID, to pass to the next calls to update the draft.
+     */
+    final public function sendRichMessageDraft(string|int $peer, \danog\MadelineProto\EventHandler\Message\RichMessage|array|string $message, \danog\MadelineProto\RichParseMode $parseMode = \danog\MadelineProto\RichParseMode::TEXT, array $media =  [
+    ], ?int $draftId = null, bool $canStop = false, bool $keepOnStop = false, bool $rtl = false, bool $noAutolink = false, ?int $topMsgId = null, ?\Amp\Cancellation $cancellation = null): int
+    {
+        return $this->wrapper->getAPI()->sendRichMessageDraft($peer, $message, $parseMode, $media, $draftId, $canStop, $keepOnStop, $rtl, $noAutolink, $topMsgId, $cancellation);
+    }
+    /**
+     * Sends a [rich message](https://core.telegram.org/bots/api#sendrichmessage) to all report peers (admins of the bot), see sendRichMessage.
+     *
+     * @param string|array|\danog\MadelineProto\EventHandler\Message\RichMessage $message Rich message: Markdown or HTML (depending on $parseMode), a list of blocks (Block objects or Bot API InputRichBlock arrays), a received RichMessage, or a Bot API InputRichMessage (see sendRichMessage)
+     * @param RichParseMode $parseMode    How to parse a string $message: plain text (the default) is sent as a single paragraph, Markdown and HTML are parsed by Telegram.
+     * @param array|null    $replyMarkup  Keyboard information.
+     * @param integer|null  $scheduleDate Schedule date.
+     * @param boolean       $silent       Whether to send the message silently, without triggering notifications.
+     * @param boolean       $noForwards   Only for bots, disallows further re-forwarding and saving of the messages, even if the destination chat doesn’t have [content protection](https://telegram.org/blog/protected-content-delete-by-date-and-more) enabled
+     * @param boolean       $background   Send this message as background message
+     * @param boolean       $clearDraft   Clears the draft field
+     * @param array         $media        Media referenced by Markdown or HTML messages, as a map from ID to file (see sendRichMessage); uploaded once for all admins.
+     * @param boolean       $rtl          Whether the text is right-to-left
+     * @param boolean       $noAutolink   Whether to skip the automatic detection of mentions, hashtags, URLs and so on
+     * @param ?Cancellation $cancellation Cancellation
+     *
+     * @return list<\danog\MadelineProto\EventHandler\Message>
+     */
+    final public function sendRichMessageToAdmins(\danog\MadelineProto\EventHandler\Message\RichMessage|array|string $message, \danog\MadelineProto\RichParseMode $parseMode = \danog\MadelineProto\RichParseMode::TEXT, ?array $replyMarkup = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, array $media =  [
+    ], bool $rtl = false, bool $noAutolink = false, ?\Amp\Cancellation $cancellation = null): array
+    {
+        return $this->wrapper->getAPI()->sendRichMessageToAdmins($message, $parseMode, $replyMarkup, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $media, $rtl, $noAutolink, $cancellation);
     }
     /**
      * Sends a sticker.
@@ -2443,13 +2672,14 @@ abstract class InternalDoc
      * @param boolean                                                       $updateStickersetsOrder Whether to move used stickersets to top
      * @param boolean                                                       $forceResend            Whether to forcefully resend the file, even if its type and name are the same.
      * @param Cancellation                                                  $cancellation           Cancellation.
+     * @param integer|string|null                                           $replyToPeer            Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
     final public function sendSticker(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $mimeType, string $emoji = '', array $stickerSet =  [
         '_' => 'inputStickerSetEmpty',
-    ], ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    ], ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $updateStickersetsOrder = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendSticker($peer, $file, $mimeType, $emoji, $stickerSet, $callback, $fileName, $ttl, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendSticker($peer, $file, $mimeType, $emoji, $stickerSet, $callback, $fileName, $ttl, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $updateStickersetsOrder, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Sends a video.
@@ -2482,11 +2712,12 @@ abstract class InternalDoc
      * @param boolean                                                       $clearDraft              Clears the draft field
      * @param boolean                                                       $forceResend             Whether to forcefully resend the file, even if its type and name are the same.
      * @param Cancellation                                                  $cancellation            Cancellation.
+     * @param integer|string|null                                           $replyToPeer             Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendVideo(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, string $mimeType = 'video/mp4', ?int $ttl = null, bool $spoiler = false, bool $roundMessage = false, bool $supportsStreaming = true, bool $noSound = false, ?int $duration = null, ?int $width = null, ?int $height = null, string $thumbSeek = '00:00:01.000', ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, bool $updateStickersetsOrder = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendVideo(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream|null $thumb = null, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, string $mimeType = 'video/mp4', ?int $ttl = null, bool $spoiler = false, bool $roundMessage = false, bool $supportsStreaming = true, bool $noSound = false, ?int $duration = null, ?int $width = null, ?int $height = null, string $thumbSeek = '00:00:01.000', ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, bool $updateStickersetsOrder = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendVideo($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $ttl, $spoiler, $roundMessage, $supportsStreaming, $noSound, $duration, $width, $height, $thumbSeek, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $updateStickersetsOrder, $cancellation);
+        return $this->wrapper->getAPI()->sendVideo($peer, $file, $thumb, $caption, $parseMode, $callback, $fileName, $mimeType, $ttl, $spoiler, $roundMessage, $supportsStreaming, $noSound, $duration, $width, $height, $thumbSeek, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $updateStickersetsOrder, $cancellation, $replyToPeer);
     }
     /**
      * Sends a voice.
@@ -2513,11 +2744,12 @@ abstract class InternalDoc
      * @param boolean                                                       $clearDraft              Clears the draft field
      * @param boolean                                                       $forceResend             Whether to forcefully resend the file, even if its type and name are the same.
      * @param ?Cancellation                                                  $cancellation            Cancellation.
+     * @param integer|string|null                                            $replyToPeer             Chat of the message to reply to, if not the destination chat (a cross-chat reply).
      *
      */
-    final public function sendVoice(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, ?int $duration = null, ?array $waveform = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null): \danog\MadelineProto\EventHandler\Message
+    final public function sendVoice(string|int $peer, \danog\MadelineProto\EventHandler\Message|\danog\MadelineProto\EventHandler\Media|\danog\MadelineProto\LocalFile|\danog\MadelineProto\RemoteUrl|\danog\MadelineProto\BotApiFileId|\Amp\ByteStream\ReadableStream $file, string $caption = '', \danog\MadelineProto\ParseMode $parseMode = \danog\MadelineProto\ParseMode::TEXT, ?callable $callback = null, ?string $fileName = null, ?int $ttl = null, ?int $duration = null, ?array $waveform = null, ?int $replyToMsgId = null, ?int $topMsgId = null, ?array $replyMarkup = null, string|int|null $sendAs = null, ?int $scheduleDate = null, bool $silent = false, bool $noForwards = false, bool $background = false, bool $clearDraft = false, bool $forceResend = false, ?\Amp\Cancellation $cancellation = null, string|int|null $replyToPeer = null): \danog\MadelineProto\EventHandler\Message
     {
-        return $this->wrapper->getAPI()->sendVoice($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $duration, $waveform, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation);
+        return $this->wrapper->getAPI()->sendVoice($peer, $file, $caption, $parseMode, $callback, $fileName, $ttl, $duration, $waveform, $replyToMsgId, $topMsgId, $replyMarkup, $sendAs, $scheduleDate, $silent, $noForwards, $background, $clearDraft, $forceResend, $cancellation, $replyToPeer);
     }
     /**
      * Mute or unmute our own audio stream in a call.
@@ -2610,6 +2842,26 @@ abstract class InternalDoc
     ], bool $pinned = false, bool $noForwards = false, bool $rtmpStream = false, ?bool $messagesEnabled = null, ?int $sendPaidMessagesStars = null): \danog\MadelineProto\EventHandler\Calls\LiveStory
     {
         return $this->wrapper->getAPI()->startLive($peer, $caption, $parseMode, $privacyRules, $pinned, $noForwards, $rtmpStream, $messagesEnabled, $sendPaidMessagesStars);
+    }
+    /**
+     * Publish what is played to an RTMP server, as an RTMP encoder would (OBS, ffmpeg...).
+     *
+     * To the RTMP livestream or live story of any group, channel or user that gave us its URL and stream key (shown
+     * by the Telegram apps when starting one "with another app"), to YouTube, Twitch, or any other RTMP(S) server.
+     *
+     * Only H.264 video and AAC audio can be published, in MP4 or Matroska (WebM) files. The stream keeps
+     * publishing (reconnecting if needed, and across restarts) until {@see RtmpStream::close()}d; publishing
+     * again to the same URL and key returns the same stream.
+     *
+     * @param string  $url        The URL of the RTMP application, e.g. `rtmps://dc4-1.rtmp.t.me/s/`, or, without `$key`, the URL followed by the stream key, e.g. `rtmps://dc4-1.rtmp.t.me/s/123456:AbCdEf`.
+     * @param ?string $key        The stream key.
+     * @param RtmpServers $servers Which servers it may connect to, checked at each connection: when whoever chooses the URL must not make us connect anywhere (into our network, say). Otherwise, the stream is closed.
+     *
+     * @throws RtmpAddressException If the server isn't one of $servers.
+     */
+    final public function startRtmpStream(string $url, #[\SensitiveParameter] ?string $key = null, \danog\MadelineProto\RtmpServers $servers = \danog\MadelineProto\RtmpServers::Any): \danog\MadelineProto\EventHandler\Calls\RtmpStream
+    {
+        return $this->wrapper->getAPI()->startRtmpStream($url, $key, $servers);
     }
     /**
      * Stop update loop.

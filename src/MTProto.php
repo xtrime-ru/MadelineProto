@@ -77,6 +77,7 @@ use danog\MadelineProto\Settings\Database\DriverDatabaseAbstract;
 use danog\MadelineProto\Settings\TLSchema;
 use danog\MadelineProto\TL\Conversion\BotAPI;
 use danog\MadelineProto\TL\Conversion\BotAPIFiles;
+use danog\MadelineProto\TL\Conversion\Rich\InputConverter;
 use danog\MadelineProto\TL\Conversion\TD;
 use danog\MadelineProto\TL\TL;
 use danog\MadelineProto\TL\TLCallback;
@@ -105,6 +106,7 @@ use Prometheus\RenderTextFormat;
 use Prometheus\Summary;
 use Psr\Log\LoggerInterface;
 use Revolt\EventLoop;
+use Revolt\EventLoop\UncaughtThrowable;
 use SplQueue;
 use Throwable;
 use Webmozart\Assert\Assert;
@@ -766,6 +768,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     {
         // Initialize needed stuffs
         Magic::start(light: false);
+        MTProtoTools\Crypt\NativeExecutor::initialize();
         // Parse and store settings
         $this->updateSettingsInternal($settings, false);
         // Actually instantiate needed classes like a boss
@@ -952,6 +955,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             'callsByPeer',
             'groupCalls',
             'seenGroupCalls',
+            'rtmpStreams',
             'conferenceCalls',
             'snitch',
 
@@ -1344,6 +1348,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
     {
         // Setup one-time stuffs
         Magic::start(light: false);
+        MTProtoTools\Crypt\NativeExecutor::initialize();
 
         // Set API wrapper
         $this->wrapper = $wrapper;
@@ -1445,6 +1450,10 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
                 foreach ([...$this->calls, ...$this->groupCalls, ...$this->conferenceCalls] as $call) {
                     EventLoop::queue($call->resumeAfterRestart(...));
                 }
+            }
+            // Publishing to an RTMP server doesn't need to be logged in.
+            foreach ($this->rtmpStreams as $stream) {
+                EventLoop::queue($stream->resumeAfterRestart(...));
             }
 
             foreach ($this->calls as $id => $call) {
@@ -2064,6 +2073,13 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
             $e = $e->getPrevious();
             \assert($e !== null);
         }
+        // Thrown into a suspended fiber when no event loop error handler is set (e.g. a SIGTERM during an onStart
+        // still running while the session is loaded, before startAndLoop sets one).
+        if ($e instanceof UncaughtThrowable
+            && ($e->getPrevious() instanceof SecurityException || $e->getPrevious() instanceof SignalException)
+        ) {
+            $e = $e->getPrevious();
+        }
         if ($e instanceof SecurityException || $e instanceof SignalException) {
             if ($now) {
                 throw $e;
@@ -2168,6 +2184,64 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
                 background: $background,
                 clearDraft: $clearDraft,
                 noWebpage: $noWebpage,
+                cancellation: $cancellation
+            );
+        }
+        return $result;
+    }
+    /**
+     * Sends a [rich message](https://core.telegram.org/bots/api#sendrichmessage) to all report peers (admins of the bot), see sendRichMessage.
+     *
+     * @param string|array|\danog\MadelineProto\EventHandler\Message\RichMessage $message Rich message: Markdown or HTML (depending on $parseMode), a list of blocks (Block objects or Bot API InputRichBlock arrays), a received RichMessage, or a Bot API InputRichMessage (see sendRichMessage)
+     * @param RichParseMode $parseMode    How to parse a string $message: plain text (the default) is sent as a single paragraph, Markdown and HTML are parsed by Telegram.
+     * @param array|null    $replyMarkup  Keyboard information.
+     * @param integer|null  $scheduleDate Schedule date.
+     * @param boolean       $silent       Whether to send the message silently, without triggering notifications.
+     * @param boolean       $noForwards   Only for bots, disallows further re-forwarding and saving of the messages, even if the destination chat doesn’t have [content protection](https://telegram.org/blog/protected-content-delete-by-date-and-more) enabled
+     * @param boolean       $background   Send this message as background message
+     * @param boolean       $clearDraft   Clears the draft field
+     * @param array         $media        Media referenced by Markdown or HTML messages, as a map from ID to file (see sendRichMessage); uploaded once for all admins.
+     * @param boolean       $rtl          Whether the text is right-to-left
+     * @param boolean       $noAutolink   Whether to skip the automatic detection of mentions, hashtags, URLs and so on
+     * @param ?Cancellation $cancellation Cancellation
+     *
+     * @return list<\danog\MadelineProto\EventHandler\Message>
+     */
+    public function sendRichMessageToAdmins(
+        string|array|\danog\MadelineProto\EventHandler\Message\RichMessage $message,
+        RichParseMode $parseMode = RichParseMode::TEXT,
+        ?array $replyMarkup = null,
+        ?int $scheduleDate = null,
+        bool $silent = false,
+        bool $noForwards = false,
+        bool $background = false,
+        bool $clearDraft = false,
+        array $media = [],
+        bool $rtl = false,
+        bool $noAutolink = false,
+        ?Cancellation $cancellation = null
+    ): array {
+        if (!$this->admins) {
+            return [];
+        }
+        // Convert (and upload) once: a ReadableStream can only be uploaded once. Files are uploaded for the first
+        // admin (bots can't upload media without a chat), and the uploaded media can be sent to the others too.
+        $message = $this->toInputRichMessage(
+            InputConverter::fromParameters($message, $parseMode, $media, $rtl, $noAutolink),
+            $this->admins[0],
+            cancellation: $cancellation,
+        );
+        $result = [];
+        foreach ($this->admins as $report) {
+            $result []= $this->sendRichMessage(
+                peer: $report,
+                message: $message,
+                replyMarkup: $replyMarkup,
+                scheduleDate: $scheduleDate,
+                silent: $silent,
+                noForwards: $noForwards,
+                background: $background,
+                clearDraft: $clearDraft,
                 cancellation: $cancellation
             );
         }
@@ -2421,7 +2495,7 @@ final class MTProto implements TLCallback, LoggerGetter, SettingsGetter
         return $this->methodCallAsyncRead('account.getPassword', ['specialMethodType' => SpecialMethodType::USER_RELATED]);
     }
     /** @internal */
-    public function getPasswordSRP(string $password): array
+    public function getPasswordSRP(#[\SensitiveParameter] string $password): array
     {
         return (new PasswordCalculator($this->getPassword()))->getCheckPassword($password);
     }

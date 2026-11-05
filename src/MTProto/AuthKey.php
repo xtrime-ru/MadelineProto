@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace danog\MadelineProto\MTProto;
 
+use danog\MadelineProto\MTProtoTools\Crypt;
+
 use JsonSerializable;
 use Webmozart\Assert\Assert;
 
@@ -71,10 +73,10 @@ abstract class AuthKey implements JsonSerializable
      *
      * @psalm-external-mutation-free
      */
-    public function setAuthKey(string $authKey): void
+    public function setAuthKey(#[\SensitiveParameter] string $authKey): void
     {
         $this->authKey = $authKey;
-        $this->id = substr(sha1($authKey, true), -8);
+        $this->id = substr(Crypt::sha1($authKey), -8);
     }
     /**
      * Check if auth key is present.

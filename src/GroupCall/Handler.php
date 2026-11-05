@@ -29,6 +29,9 @@ use danog\MadelineProto\EventHandler\Calls\GroupCall;
 use danog\MadelineProto\EventHandler\Calls\GroupCallStars;
 use danog\MadelineProto\EventHandler\Calls\GroupCallState;
 use danog\MadelineProto\EventHandler\Calls\LiveStory;
+use danog\MadelineProto\EventHandler\Calls\RtmpStream;
+use danog\MadelineProto\GroupCall\Rtmp\RtmpAddressException;
+use danog\MadelineProto\GroupCall\Rtmp\RtmpClient;
 use danog\MadelineProto\LocalDirectory;
 use danog\MadelineProto\LocalFile;
 use danog\MadelineProto\Logger;
@@ -38,6 +41,7 @@ use danog\MadelineProto\ParseMode;
 use danog\MadelineProto\RecordingFormat;
 use danog\MadelineProto\RemoteUrl;
 use danog\MadelineProto\RPCErrorException;
+use danog\MadelineProto\RtmpServers;
 use danog\MadelineProto\TextEntities;
 use danog\MadelineProto\Tgcalls\E2E\ConferenceCall;
 use Revolt\EventLoop;
@@ -53,6 +57,8 @@ use Revolt\EventLoop;
  */
 trait Handler
 {
+    /** The most upload.getFile returns at once: a chunk of a stream may be made of several parts. */
+    private const STREAM_CHUNK_PART = 1024 * 1024;
     /** How many untracked group calls to remember, see {@see self::$seenGroupCalls}. */
     private const SEEN_GROUP_CALLS_MAX = 1000;
 
@@ -63,6 +69,12 @@ trait Handler
      * @var array<int, GroupCallController>
      */
     private array $groupCalls = [];
+    /**
+     * What we publish to RTMP servers, see {@see self::startRtmpStream()}.
+     *
+     * @var array<int, RtmpStreamController>
+     */
+    private array $rtmpStreams = [];
     /**
      * The group calls we got updates about but do not track: ID => [access hash, peer ID, live story].
      *
@@ -401,7 +413,9 @@ trait Handler
         if (isset($this->conferenceCalls[$call['id']])) {
             return $this->conferenceCalls[$call['id']]->getPublic();
         }
-        return new ConferenceCallUpdate($this, $call);
+        $public = new ConferenceCallUpdate($this, $call);
+        $public->setJoinInput($inputCall);
+        return $public;
     }
 
     /**
@@ -1017,9 +1031,14 @@ trait Handler
      * Download one media chunk of a group call in stream mode (upload.getFile with an
      * inputGroupCallStream location) from its stream DC, or null on a CDN redirect.
      *
+     * Whether it's partial (storage.filePartial) says little: the chunks of a stream are flagged so even behind its live
+     * edge, where they're complete. The chunk of the live edge itself is cut short while being written.
+     *
+     * @return ?array{bytes: string, partial: bool}
+     *
      * @internal
      */
-    public function downloadGroupCallStreamChunk(int $id, int $timeMs, int $scale = 0, ?int $videoChannel = null, ?int $videoQuality = null): ?string
+    public function downloadGroupCallStreamChunk(int $id, int $timeMs, int $scale = 0, ?int $videoChannel = null, ?int $videoQuality = null): ?array
     {
         $controller = $this->getGroupCallController($id);
         $location = ['_' => 'inputGroupCallStream', 'call' => $controller->getInputCall(), 'time_ms' => $timeMs, 'scale' => $scale];
@@ -1028,17 +1047,26 @@ trait Handler
             $location['video_quality'] = $videoQuality ?? 0;
         }
         $dc = $this->groupCallStreamDc($controller);
-        $result = $this->methodCallAsyncRead('upload.getFile', [
-            'location' => $location,
-            'offset' => 0,
-            'limit' => 1024 * 1024,
-            'floodWaitLimit' => 0,
-            'specialMethodType' => SpecialMethodType::FILE_RELATED,
-        ], $dc);
-        if ($result['_'] !== 'upload.file') {
-            return null;
-        }
-        return (string) $result['bytes'];
+        // A chunk can be bigger than the 1 MB a request returns (the one of a keyframe at a high bitrate): its parts
+        // are fetched until one is shorter. Fetched with a single request, it was cut at 1 MB, without its moov.
+        $bytes = '';
+        $partial = false;
+        do {
+            $result = $this->methodCallAsyncRead('upload.getFile', [
+                'location' => $location,
+                'offset' => \strlen($bytes),
+                'limit' => self::STREAM_CHUNK_PART,
+                'floodWaitLimit' => 0,
+                'specialMethodType' => SpecialMethodType::GROUP_CALL_FILE_RELATED,
+            ], $dc);
+            if ($result['_'] !== 'upload.file') {
+                return null;
+            }
+            $part = (string) $result['bytes'];
+            $bytes .= $part;
+            $partial = $partial || ($result['type']['_'] ?? null) === 'storage.filePartial';
+        } while (\strlen($part) === self::STREAM_CHUNK_PART);
+        return ['bytes' => $bytes, 'partial' => $partial];
     }
 
     /**
@@ -1082,6 +1110,44 @@ trait Handler
             throw new AssertionError('The group call has ended!');
         }
         return $controller;
+    }
+
+    /**
+     * The live story of a story (its messageMediaVideoStream media): the tracked one, or one built from the story alone,
+     * without any request (a story update must not fetch its call), whose call is fetched and tracked once used.
+     *
+     * @internal
+     */
+    public function wrapLiveStoryMedia(array $media, ?int $peerId): LiveStory
+    {
+        $input = $media['call'];
+        if ($input['_'] !== 'inputGroupCall') {
+            $controller = $this->getGroupCallByInput($input, $peerId, liveStory: true);
+            \assert($controller !== null && $controller->public instanceof LiveStory, 'The live story has ended');
+            return $controller->public;
+        }
+        $tracked = ($this->groupCalls[$input['id']] ?? null)?->public;
+        if ($tracked instanceof LiveStory) {
+            return $tracked;
+        }
+        $this->rememberGroupCall($input['id'], $input['access_hash'], $peerId, true);
+        // What a story says about its call: the rest are the defaults until it's fetched.
+        return new LiveStory($this, [
+            '_' => 'groupCall',
+            'id' => $input['id'],
+            'access_hash' => $input['access_hash'],
+            'participants_count' => 0,
+            'join_muted' => false,
+            'can_change_join_muted' => false,
+            'join_date_asc' => false,
+            'can_start_video' => false,
+            'rtmp_stream' => $media['rtmp_stream'] ?? false,
+            'listeners_hidden' => false,
+            'creator' => false,
+            'messages_enabled' => false,
+            'can_change_messages_enabled' => false,
+            'unmuted_video_limit' => 0,
+        ], $peerId);
     }
 
     /**
@@ -1212,15 +1278,251 @@ trait Handler
         }
         $updates = $this->methodCallAsyncRead('stories.startLive', $params);
         foreach ($updates['updates'] ?? [] as $update) {
-            if ($update['_'] === 'updateGroupCall' && $update['call']['_'] === 'groupCall') {
-                $inputCall = ['_' => 'inputGroupCall', 'id' => $update['call']['id'], 'access_hash' => $update['call']['access_hash']];
-                $controller = $this->getGroupCallByInput($inputCall, $this->getIdInternal($peer), liveStory: true);
-                if ($controller !== null && $controller->public instanceof LiveStory) {
-                    return $controller->public;
-                }
+            // The server returns the story (whose media is the call), maybe without an updateGroupCall.
+            $inputCall = match (true) {
+                $update['_'] === 'updateGroupCall' && $update['call']['_'] === 'groupCall' => ['_' => 'inputGroupCall', 'id' => $update['call']['id'], 'access_hash' => $update['call']['access_hash']],
+                $update['_'] === 'updateStory' && ($update['story']['media']['_'] ?? null) === 'messageMediaVideoStream' => $update['story']['media']['call'],
+                default => null,
+            };
+            if ($inputCall === null) {
+                continue;
+            }
+            // getId(), not getIdInternal(), which doesn't resolve 'me' (the live story then had no peer).
+            $controller = $this->getGroupCallByInput($inputCall, $this->getId($peer), liveStory: true);
+            if ($controller !== null && $controller->public instanceof LiveStory) {
+                return $controller->public;
             }
         }
         throw new AssertionError('The server did not return the started live story!');
+    }
+
+    /**
+     * Publish what is played to an RTMP server, as an RTMP encoder would (OBS, ffmpeg...).
+     *
+     * To the RTMP livestream or live story of any group, channel or user that gave us its URL and stream key (shown
+     * by the Telegram apps when starting one "with another app"), to YouTube, Twitch, or any other RTMP(S) server.
+     *
+     * Only H.264 video and AAC audio can be published, in MP4 or Matroska (WebM) files. The stream keeps
+     * publishing (reconnecting if needed, and across restarts) until {@see RtmpStream::close()}d; publishing
+     * again to the same URL and key returns the same stream.
+     *
+     * @param string  $url        The URL of the RTMP application, e.g. `rtmps://dc4-1.rtmp.t.me/s/`, or, without `$key`, the URL followed by the stream key, e.g. `rtmps://dc4-1.rtmp.t.me/s/123456:AbCdEf`.
+     * @param ?string $key        The stream key.
+     * @param RtmpServers $servers Which servers it may connect to, checked at each connection: when whoever chooses the URL must not make us connect anywhere (into our network, say). Otherwise, the stream is closed.
+     *
+     * @throws RtmpAddressException If the server isn't one of $servers.
+     */
+    public function startRtmpStream(string $url, #[\SensitiveParameter] ?string $key = null, RtmpServers $servers = RtmpServers::Any): RtmpStream
+    {
+        if ($key === null) {
+            [$url, $key] = self::splitRtmpUrl($url);
+        }
+        $parts = parse_url($url);
+        if (!isset($parts['scheme'], $parts['host']) || !\in_array($parts['scheme'], ['rtmp', 'rtmps'], true)) {
+            throw new AssertionError("Not an RTMP URL: $url");
+        }
+        if ($key === '') {
+            throw new AssertionError("No stream key given for $url");
+        }
+        // At once, to tell the caller; checked again at each connection, see RtmpClient::publish().
+        RtmpClient::checkServer($parts['host'], $servers);
+        $this->forgetClosedRtmpStreams();
+        foreach ($this->rtmpStreams as $stream) {
+            if ($stream->publishesTo($url, $key)) {
+                if (!$stream->getServers()->isWithin($servers)) {
+                    // It may connect to other servers: not to be handed to whoever may only stream to those.
+                    throw new RtmpAddressException("Already publishing to $url, allowed to connect to other servers");
+                }
+                return $stream->public;
+            }
+        }
+        do {
+            $id = random_int(1, PHP_INT_MAX);
+        } while (isset($this->rtmpStreams[$id]));
+        $stream = new RtmpStreamController($this, $id, $url, $key, $servers);
+        $this->rtmpStreams[$id] = $stream;
+        return $stream->public;
+    }
+
+    /**
+     * What we publish to an RTMP server with a URL and stream key, if anything.
+     *
+     * See {@see self::startRtmpStream()}.
+     *
+     * @param string  $url The URL of the RTMP application, or, without `$key`, the URL followed by the stream key.
+     * @param ?string $key The stream key.
+     */
+    public function getRtmpStream(string $url, #[\SensitiveParameter] ?string $key = null): ?RtmpStream
+    {
+        if ($key === null) {
+            [$url, $key] = self::splitRtmpUrl($url);
+        }
+        $this->forgetClosedRtmpStreams();
+        foreach ($this->rtmpStreams as $stream) {
+            if ($stream->publishesTo($url, $key)) {
+                return $stream->public;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Forget the RTMP streams that closed by themselves (their server isn't one of those allowed).
+     */
+    private function forgetClosedRtmpStreams(): void
+    {
+        foreach ($this->rtmpStreams as $id => $stream) {
+            if ($stream->isClosed()) {
+                unset($this->rtmpStreams[$id]);
+            }
+        }
+    }
+
+    /**
+     * Split an RTMP URL followed by its stream key (the last segment of its path) into both.
+     *
+     * @return array{string, string}
+     */
+    private static function splitRtmpUrl(#[\SensitiveParameter] string $url): array
+    {
+        // The key follows the last slash, after the application: rtmps://host/app/key
+        $scheme = strpos($url, '://');
+        $hostEnd = $scheme === false ? false : strpos($url, '/', $scheme + 3);
+        $slash = strrpos($url, '/');
+        if ($hostEnd === false || $slash === $hostEnd || $slash === \strlen($url) - 1) {
+            throw new AssertionError('Not an RTMP URL followed by a stream key, e.g. rtmps://dc4-1.rtmp.t.me/s/123456:AbCdEf');
+        }
+        return [substr($url, 0, $slash + 1), substr($url, $slash + 1)];
+    }
+
+    /**
+     * What we publish to RTMP servers.
+     *
+     * See {@see self::startRtmpStream()}.
+     *
+     * @return array<int, RtmpStream>
+     */
+    public function getRtmpStreams(): array
+    {
+        $this->forgetClosedRtmpStreams();
+        return array_map(static fn (RtmpStreamController $c): RtmpStream => $c->public, $this->rtmpStreams);
+    }
+
+    private function getRtmpStreamController(int $id): RtmpStreamController
+    {
+        return $this->rtmpStreams[$id] ?? throw new AssertionError("RTMP stream $id was closed, or never started");
+    }
+
+    /**
+     * Play a file to an RTMP stream.
+     *
+     * See {@see RtmpStream::play()}.
+     */
+    public function rtmpStreamPlay(int $id, LocalFile|RemoteUrl|ReadableStream $file, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->play($file, $dest);
+    }
+
+    /**
+     * Play a file to an RTMP stream, blocking until it has finished playing if a stream was passed.
+     *
+     * See {@see RtmpStream::playBlocking()}.
+     */
+    public function rtmpStreamPlayBlocking(int $id, LocalFile|RemoteUrl|ReadableStream $file, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->playBlocking($file, $dest);
+    }
+
+    /**
+     * Set the files to play on loop to an RTMP stream while its playlist is empty.
+     *
+     * See {@see RtmpStream::playOnHold()}.
+     */
+    public function rtmpStreamPlayOnHold(int $id, MediaDestination $dest = MediaDestination::Camera, LocalFile|RemoteUrl|ReadableStream ...$files): void
+    {
+        $this->getRtmpStreamController($id)->playOnHold($dest, ...$files);
+    }
+
+    /**
+     * Skip to the next file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::skip()}.
+     */
+    public function rtmpStreamSkipPlay(int $id, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->skip($dest);
+    }
+
+    /**
+     * Stop playing all files to an RTMP stream, clearing its playlists.
+     *
+     * See {@see RtmpStream::stop()}.
+     */
+    public function rtmpStreamStopPlay(int $id, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->stop($dest);
+    }
+
+    /**
+     * Pause the file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::pause()}.
+     */
+    public function rtmpStreamPausePlay(int $id, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->pause($dest);
+    }
+
+    /**
+     * Resume the file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::resume()}.
+     */
+    public function rtmpStreamResumePlay(int $id, MediaDestination $dest = MediaDestination::Camera): void
+    {
+        $this->getRtmpStreamController($id)->resume($dest);
+    }
+
+    /**
+     * Whether the file played to an RTMP stream is paused.
+     *
+     * See {@see RtmpStream::isPaused()}.
+     */
+    public function isRtmpStreamPlayPaused(int $id, MediaDestination $dest = MediaDestination::Camera): bool
+    {
+        return $this->getRtmpStreamController($id)->isPaused($dest);
+    }
+
+    /**
+     * The file played to an RTMP stream.
+     *
+     * See {@see RtmpStream::getCurrent()}.
+     */
+    public function rtmpStreamGetCurrent(int $id, MediaDestination $dest = MediaDestination::Camera): RemoteUrl|LocalFile|string|null
+    {
+        return $this->getRtmpStreamController($id)->getCurrent($dest);
+    }
+
+    /**
+     * Whether we are connected to the server of an RTMP stream right now.
+     *
+     * See {@see RtmpStream::isConnected()}.
+     */
+    public function isRtmpStreamConnected(int $id): bool
+    {
+        return $this->getRtmpStreamController($id)->isConnected();
+    }
+
+    /**
+     * Stop publishing to an RTMP stream for good.
+     *
+     * See {@see RtmpStream::close()}.
+     */
+    public function closeRtmpStream(int $id): void
+    {
+        $stream = $this->rtmpStreams[$id] ?? null;
+        unset($this->rtmpStreams[$id]);
+        $stream?->close();
     }
 
     /**

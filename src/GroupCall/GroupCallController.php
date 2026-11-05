@@ -19,7 +19,9 @@
 namespace danog\MadelineProto\GroupCall;
 
 use Amp\ByteStream\WritableStream;
+use Amp\CancelledException;
 use Amp\Sync\LocalMutex;
+use Amp\TimeoutCancellation;
 use danog\DialogId\DialogId;
 use danog\MadelineProto\CallStream;
 use danog\MadelineProto\EventHandler\Call;
@@ -95,6 +97,12 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
     private array $participants = [];
     /** @var array<int, int> Signed source ID => bot API peer ID. */
     private array $sourceToPeer = [];
+    /**
+     * @var array<int, array<int, int>> The retransmission (RTX) SSRC of each video and screen-share SSRC of each
+     *                                  participant that has one (the second source of its FID group), signed, by SSRC,
+     *                                  by bot API peer ID: the SFU resends the lost packets of the stream on it.
+     */
+    private array $retransmission = [];
 
     /** Our own audio source ID, in the signed form used by the API. */
     private int $source = 0;
@@ -163,7 +171,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         $result = get_object_vars($this);
         // The WebRTC connection now serializes itself and resumes its SFU transport on wakeup, so it
         // is kept. The mutex and the two event-loop watcher IDs cannot survive and are recreated.
-        unset($result['joinMutex'], $result['checkWatcher'], $result['checking'], $result['gapWatcher'], $result['rejoinWatcher'], $result['streamReceiver'], $result['rtmpPublisher'], $result['resumePending']);
+        unset($result['joinMutex'], $result['checkWatcher'], $result['checking'], $result['gapWatcher'], $result['rejoinWatcher'], $result['rtmpPublisher'], $result['resumePending']);
         return $result;
     }
 
@@ -176,6 +184,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         $this->rejoinWatcher = null;
         $this->streamReceiver = null;
         $this->rtmpPublisher = null;
+        // The stream receiver is kept, with its recording, see StreamReceiver::__serialize().
         $this->restoreDeclaredProperties($data);
         if (!isset($this->API->logger)) {
             $this->API->setupLogger();
@@ -246,21 +255,24 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         if ($this->publishing) {
             // Publishing does not depend on being joined (as a viewer).
             $this->log("Resumed publishing to $this after a restart of the process.");
-            $this->diskJockey->resumeReader();
             $this->rtmpPublisher = $this->createPublisher(null);
+            EventLoop::queue(function (): void {
+                $this->awaitPublisher();
+                $this->diskJockey->resumeReader();
+            });
         }
         if ($this->callState === GroupCallState::JOINING) {
             // The process died in the middle of join(): its phone.joinGroupCall and the payload it
             // carried are gone with it, and join() itself is a no-op while JOINING, so start over.
             $this->log("Resumed $this in the middle of a join, joining again...", Logger::WARNING);
             // What was played resumes with the new join (see below for why the reader is restarted).
-            $this->diskJockey->resumeReader();
+            $this->resumeDiskJockey();
             $this->rejoin();
             return;
         }
         if ($this->rejoining) {
             $this->log("Resumed $this, which we were trying to rejoin, rejoining...", Logger::WARNING);
-            $this->diskJockey->resumeReader();
+            $this->resumeDiskJockey();
             $this->rejoin();
             return;
         }
@@ -274,14 +286,15 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         $this->startChecking();
         // Restart the demuxers/readers too (DjLoop::__unserialize() deliberately leaves them dormant),
         // or nothing is transmitted after a restart.
-        $this->diskJockey->resumeReader();
+        $this->resumeDiskJockey();
         $this->presentationDj?->resumeReader();
         $this->connection?->resume();
         $this->presentationConnection?->resume();
         if ($this->streamMode) {
-            // The stream receiver does not survive a restart (its recording does not either):
-            // follow the stream again from the live edge.
-            $this->streamReceiver = new StreamReceiver($this);
+            // Follow the stream again from the live edge, continuing its recording, or keep us in it (see
+            // StreamReceiver::keepAlive()).
+            $this->streamReceiver ??= new StreamReceiver($this);
+            $this->streamReceiver->resume();
             $this->streamReceiver->start($this->rtmpMode);
         }
         EventLoop::queue($this->refetch(...));
@@ -409,6 +422,8 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
             );
             $this->connection?->close();
             $this->connection = null;
+            // Even without a recording: the server drops a listener that downloads nothing, see
+            // StreamReceiver::keepAlive().
             $this->streamReceiver ??= new StreamReceiver($this);
             $this->streamReceiver->start($parsed['rtmp']);
             return;
@@ -517,6 +532,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         }
         $this->participants = [];
         $this->sourceToPeer = [];
+        $this->retransmission = [];
         foreach ($result['participants'] as $participant) {
             $this->applyParticipant($participant);
         }
@@ -595,6 +611,35 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         $this->syncSources();
     }
 
+    /**
+     * The retransmission SSRC of each video and screen-share SSRC of a participant that has one: from the source
+     * groups of the update, or kept from the previous one for a stream a min update doesn't carry.
+     *
+     * @param array<int, int> $previous
+     *
+     * @return array<int, int> Signed SSRCs, by signed SSRC.
+     *
+     * @psalm-pure
+     */
+    private static function retransmissionSources(array $participant, AbstractGroupCallParticipant $parsed, array $previous): array
+    {
+        $sources = [];
+        foreach (['video', 'presentation'] as $key) {
+            $video = $participant[$key] ?? null;
+            if (!\is_array($video)) {
+                continue;
+            }
+            foreach ($video['source_groups'] ?? [] as $group) {
+                if (($group['semantics'] ?? '') === 'FID' && isset($group['sources'][0], $group['sources'][1])) {
+                    $sources[$group['sources'][0]] = $group['sources'][1];
+                }
+            }
+        }
+        // Only the streams the participant sends (not a paused one, say).
+        $current = array_flip([...$parsed->videoSources, ...$parsed->presentationSources]);
+        return array_intersect_key($sources + $previous, $current);
+    }
+
     private function applyParticipant(array $participant): void
     {
         $peerId = $this->API->getIdInternal($participant['peer']);
@@ -606,6 +651,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
             if ($old !== null) {
                 unset($this->sourceToPeer[$old->source], $this->participants[$peerId]);
             }
+            unset($this->retransmission[$peerId]);
             if (($participant['self'] ?? false)
                 && $this->callState === GroupCallState::JOINED
                 && (int) ($participant['source'] ?? 0) === $this->source
@@ -621,6 +667,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
             ? LiveStoryParticipant::fromRaw($participant, $peerId, $this->participants[$peerId] ?? null)
             : GroupCallParticipant::fromRaw($participant, $peerId, $this->participants[$peerId] ?? null);
         $this->participants[$peerId] = $parsed;
+        $this->retransmission[$peerId] = self::retransmissionSources($participant, $parsed, $this->retransmission[$peerId] ?? []);
         if ($parsed->source !== 0) {
             $this->sourceToPeer[$parsed->source] = $peerId;
             $this->sourcePeers[$parsed->source] = $peerId;
@@ -641,7 +688,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
             return;
         }
         $sources = [];
-        foreach ($this->participants as $participant) {
+        foreach ($this->participants as $peerId => $participant) {
             if ($participant->source !== 0 && $participant->source !== $this->source) {
                 $sources[] = [
                     'audio' => $participant->source,
@@ -650,6 +697,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
                     'presentation' => $participant->presentationSources,
                     'videoEndpoint' => $participant->videoEndpoint,
                     'presentationEndpoint' => $participant->presentationEndpoint,
+                    'rtx' => $this->retransmission[$peerId] ?? [],
                 ];
             }
         }
@@ -687,8 +735,11 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         if ($this->callState !== GroupCallState::JOINED) {
             return;
         }
-        $this->log("The WebRTC connection of $this failed, checking whether we are still joined...", Logger::WARNING);
-        EventLoop::queue($this->checkJoined(...));
+        // A failed connection never recovers (there is no ICE restart without joining again), whatever the server says
+        // about our source: after a network outage, waiting for checkGroupCall to say we were dropped left every call
+        // sending nothing for hours.
+        $this->log("The WebRTC connection of $this failed, rejoining...", Logger::WARNING);
+        EventLoop::queue($this->rejoin(...));
     }
 
     /**
@@ -767,11 +818,34 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
     /**
      * The call ended, or we may not be in it anymore (GROUPCALL_FORBIDDEN or GROUPCALL_INVALID): leave it, as
      * TDLib does.
+     *
+     * A call that ended (GROUPCALL_INVALID) is reported to the event handler as discarded, as if we got its
+     * groupCallDiscarded: we may never get one (a live story ends with an updateStory deleting it).
      */
     private function onEnded(string $rpc): void
     {
         $this->log("$this ended, or we may not be in it anymore ($rpc): leaving it.", Logger::NOTICE);
+        $discarded = $this->public->discarded;
         $this->cleanup();
+        if ($rpc !== 'GROUPCALL_INVALID' || $discarded) {
+            return;
+        }
+        $update = [
+            '_' => 'updateGroupCall',
+            'call' => ['_' => 'groupCallDiscarded', 'id' => $this->public->id, 'access_hash' => $this->public->accessHash, 'duration' => 0],
+        ];
+        if ($this->public instanceof LiveStory) {
+            $update['live_story'] = true;
+        }
+        $peerId = $this->public->peerId;
+        if ($peerId !== null) {
+            $update['peer'] = match (true) {
+                DialogId::isUser($peerId) => ['_' => 'peerUser', 'user_id' => $peerId],
+                DialogId::isChat($peerId) => ['_' => 'peerChat', 'chat_id' => DialogId::toChatId($peerId)],
+                default => ['_' => 'peerChannel', 'channel_id' => DialogId::toSupergroupOrChannelId($peerId)],
+            };
+        }
+        $this->API->saveUpdate($update);
     }
 
     /**
@@ -974,6 +1048,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         if ($this->publishing) {
             // Reconnect right away, if the ingest dropped the connection while nothing was played.
             $this->rtmpPublisher?->wake();
+            $this->awaitPublisher();
             return;
         }
         if ($this->callState === GroupCallState::LEFT) {
@@ -994,6 +1069,34 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         if ($this->publishing && $this->rtmpPublisher === null) {
             $this->log("Publishing what is played to the RTMP livestream $this", Logger::NOTICE);
             $this->rtmpPublisher = $this->createPublisher($ingest);
+        }
+        $this->awaitPublisher();
+    }
+
+    /**
+     * Restart reading what is played, after a restart: when publishing it, only once connected to the RTMP ingest,
+     * see {@see self::resumeAfterRestart()}.
+     */
+    private function resumeDiskJockey(): void
+    {
+        if (!$this->publishing) {
+            $this->diskJockey->resumeReader();
+        }
+    }
+
+    /** How long play() waits for the connection to the RTMP ingest, in seconds. */
+    private const PUBLISHER_CONNECTION_TIMEOUT = 10;
+
+    /**
+     * Wait for the connection to the RTMP ingest: what is played before is dropped, with it the first keyframe,
+     * and the video until the next one.
+     */
+    private function awaitPublisher(): void
+    {
+        try {
+            $this->rtmpPublisher?->awaitConnection(new TimeoutCancellation(self::PUBLISHER_CONNECTION_TIMEOUT));
+        } catch (CancelledException) {
+            $this->log("Not connected to the RTMP ingest of $this after ".self::PUBLISHER_CONNECTION_TIMEOUT." seconds: playing anyway, published once connected", Logger::WARNING);
         }
     }
 
@@ -1083,6 +1186,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         CallStream::checkAvailable($streams, $available, 'The stream');
         $this->streamReceiver ??= new StreamReceiver($this);
         $this->streamReceiver->setOutput($file, $format);
+        $this->streamReceiver->start($this->rtmpMode);
         return $available;
     }
 
@@ -1102,6 +1206,7 @@ final class GroupCallController implements CallControllerInterface, GroupConnect
         }
         $this->streamReceiver ??= new StreamReceiver($this);
         $this->streamReceiver->setOutputDirectory($dir, $format);
+        $this->streamReceiver->start($this->rtmpMode);
         return $this;
     }
 

@@ -21,6 +21,7 @@ declare(strict_types=1);
 namespace danog\MadelineProto\MTProtoTools\Crypt;
 
 use danog\MadelineProto\Magic;
+use danog\MadelineProto\MTProtoTools\Crypt;
 
 /**
  * Continuous mode IGE implementation.
@@ -42,12 +43,29 @@ abstract class IGE
     /**
      * Instantiate appropriate handler.
      */
-    public static function getInstance(string $key, string $iv): IGE
+    public static function getInstance(#[\SensitiveParameter] string $key, string $iv): IGE
     {
+        if (NativeExecutor::get()) {
+            return new IGENative($key, $iv);
+        }
+        return self::getSyncInstance($key, $iv);
+    }
+
+    /**
+     * Instantiate the fastest handler that never suspends.
+     */
+    public static function getSyncInstance(#[\SensitiveParameter] string $key, string $iv): IGE
+    {
+        if (Crypt::native()) {
+            return new IGENativeSync($key, $iv);
+        }
+        if (IGEFFI::isAvailable()) {
+            return new IGEFFI($key, $iv);
+        }
         if (Magic::$hasOpenssl) {
             return new IGEOpenssl($key, $iv);
         }
-        return new IGEPhpseclib($key, $iv);
+        return new IGEPhp($key, $iv);
     }
 
     /**
@@ -63,7 +81,7 @@ abstract class IGE
     }
 
     /** @psalm-impure */
-    abstract protected function __construct(string $key, string $iv);
+    abstract protected function __construct(#[\SensitiveParameter] string $key, string $iv);
     /** @psalm-impure */
     abstract public function encrypt(string $plaintext): string;
     /** @psalm-impure */

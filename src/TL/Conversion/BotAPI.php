@@ -22,12 +22,19 @@ namespace danog\MadelineProto\TL\Conversion;
 
 use danog\Decoder\FileId;
 use danog\Decoder\FileIdType;
+use danog\DialogId\DialogId;
+use danog\MadelineProto\EventHandler\Media;
 use danog\MadelineProto\EventHandler\Message\Entities\MessageEntity;
+use danog\MadelineProto\EventHandler\Message\RichMessage;
+use danog\MadelineProto\Exception as MadelineException;
 use danog\MadelineProto\Logger;
 use danog\MadelineProto\MTProto;
 use danog\MadelineProto\StrTools;
+use danog\MadelineProto\TL\Conversion\Rich\BotAPIConverter;
+use danog\MadelineProto\TL\Conversion\Rich\OutputConverter;
 use danog\MadelineProto\Tools;
 use Throwable;
+use WeakMap;
 
 /**
  * @internal
@@ -266,6 +273,9 @@ trait BotAPI
                 if (isset($data['media']) && $data['media']['_'] !== 'messageMediaWebPage') {
                     $newd = array_merge($newd, $this->MTProtoToBotAPI($data['media']));
                 }
+                if (isset($data['rich_message'])) {
+                    $newd['rich_message'] = $this->richMessageToBotAPI($data['rich_message']);
+                }
                 return $newd;
             case 'messageEntityMentionName':
             case 'inputMessageEntityMentionName':
@@ -445,7 +455,56 @@ trait BotAPI
         if (isset($arguments['parse_mode'])) {
             $arguments = $this->parseMode($arguments);
         }
+        if (isset($arguments['rich_message'])) {
+            $richMessage = $arguments['rich_message'];
+            if (\is_string($richMessage)) {
+                // JSON-serialized, as passed to the Bot API
+                $arguments['rich_message'] = $richMessage = json_decode($richMessage, true, flags: JSON_THROW_ON_ERROR);
+            }
+            if ($richMessage instanceof RichMessage || (\is_array($richMessage) && !isset($richMessage['_']))) {
+                $peer = $arguments['peer'] ?? null;
+                if (\is_int($peer) && DialogId::isSecretChat($peer)) {
+                    // Checked again when the call is rewritten for secret chats, but before uploading the media here
+                    throw new MadelineException("Rich messages can't be sent to secret chats");
+                }
+                $arguments['rich_message'] = $this->toInputRichMessage(
+                    $richMessage,
+                    // Bots can't upload media without the destination chat
+                    \is_int($peer) || \is_string($peer) ? $peer : (\is_array($peer) ? $this->getId($peer) : null),
+                    // New files are uploaded for the destination chat: inline messages and drafts have none
+                    allowUploads: $peer !== null,
+                    cancellation: $arguments['cancellation'] ?? null,
+                );
+            }
+        }
         return $arguments;
+    }
+    /**
+     * Convert an MTProto richMessage to a Bot API RichMessage.
+     *
+     * @internal
+     */
+    public function richMessageToBotAPI(array $richMessage): array
+    {
+        // The Bot API media are converted from the raw media of the Media objects of the blocks
+        /** @var WeakMap<Media, array> */
+        $raw = new WeakMap;
+        $message = OutputConverter::convert($richMessage, function (array $media) use ($raw): ?Media {
+            $wrapped = $this->wrapMedia($media);
+            if ($wrapped !== null) {
+                $raw[$wrapped] = $media;
+            }
+            return $wrapped;
+        });
+        return BotAPIConverter::convert(
+            $message,
+            function (mixed $media, string $type) use ($raw): array {
+                $converted = $this->MTProtoToBotAPI($raw[$media]);
+                unset($converted['caption']);
+                return $converted[$type] ?? reset($converted);
+            },
+            fn (int $userId): array => $this->getPwrChat($userId, false),
+        );
     }
     /**
      * Convert markdown and HTML messages.

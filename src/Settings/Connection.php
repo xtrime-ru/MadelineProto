@@ -63,10 +63,6 @@ final class Connection extends SettingsAbstract
      */
     protected int $maxMediaSocketCount = 10;
     /**
-     * Robin period (seconds).
-     */
-    protected int $robinPeriod = 10;
-    /**
      * Protocol identifier.
      *
      * @var class-string<MTProtoBufferInterface>
@@ -297,28 +293,6 @@ final class Connection extends SettingsAbstract
     }
 
     /**
-     * Get robin period (seconds).
-     */
-    public function getRobinPeriod(): int
-    {
-        return $this->robinPeriod;
-    }
-
-    /**
-     * Set robin period (seconds).
-     *
-     * @param int $robinPeriod Robin period (seconds).
-     *
-     * @psalm-external-mutation-free
-     */
-    public function setRobinPeriod(int $robinPeriod): self
-    {
-        $this->robinPeriod = $robinPeriod;
-
-        return $this;
-    }
-
-    /**
      * Get proxy identifiers.
      *
      * @return array<class-string<StreamInterface>, array>
@@ -340,7 +314,7 @@ final class Connection extends SettingsAbstract
      *
      * @psalm-external-mutation-free
      */
-    public function addProxy(string $proxy, array $extra = []): self
+    public function addProxy(string $proxy, #[\SensitiveParameter] array $extra = []): self
     {
         if (!isset(class_implements($proxy)[StreamInterface::class])) {
             throw new Exception('An invalid proxy class was specified!');
@@ -368,7 +342,7 @@ final class Connection extends SettingsAbstract
      *
      * @psalm-external-mutation-free
      */
-    public function setProxies(array $proxies): self
+    public function setProxies(#[\SensitiveParameter] array $proxies): self
     {
         foreach ($proxies as $proxy => $_) {
             if (!isset(class_implements($proxy)[StreamInterface::class])) {

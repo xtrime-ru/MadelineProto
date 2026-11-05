@@ -24,6 +24,8 @@ use danog\MadelineProto\Connection;
 use danog\MadelineProto\DataCenter;
 use danog\MadelineProto\EventHandler\Calls\GroupCallState;
 use danog\MadelineProto\GroupCall\GroupCallController;
+use danog\MadelineProto\GroupCall\StreamReceiver;
+use danog\MadelineProto\LocalFile;
 use danog\MadelineProto\Logger;
 use danog\MadelineProto\MTProto;
 use danog\MadelineProto\RPCErrorException;
@@ -33,8 +35,9 @@ use danog\MadelineProto\Settings\Logger as LoggerSettings;
 use DG\BypassFinals;
 use Exception;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
 use ReflectionProperty;
+
+use function Amp\delay;
 
 /**
  * A joined group call checks whether we're still in it, as TDLib does: its WebRTC connection can't tell, as the
@@ -62,12 +65,18 @@ final class GroupCallMembershipTest extends TestCase
         BypassFinals::enable();
     }
 
+    /** @var list<array> The updates saved. */
+    private array $updates = [];
+
     private function client(): MTProto
     {
-        $API = (new ReflectionClass(MTProto::class))->newInstanceWithoutConstructor();
+        $API = $this->getMockBuilder(MTProto::class)->disableOriginalConstructor()->onlyMethods(['saveUpdate'])->getMock();
+        $API->method('saveUpdate')->willReturnCallback(function (array $update): void {
+            $this->updates[] = $update;
+        });
         $API->logger = new Logger((new LoggerSettings)->setType(Logger::ECHO_LOGGER)->setLevel(Logger::FATAL_ERROR));
         $API->wrapper = new APIWrapper(new SessionPaths(sys_get_temp_dir().'/madeline-group-call-membership'));
-        (new ReflectionProperty($API, 'settings'))->setValue($API, new Settings);
+        (new ReflectionProperty(MTProto::class, 'settings'))->setValue($API, new Settings);
         $connection = $this->createMock(Connection::class);
         $connection->method('methodCallAsyncRead')->willReturnCallback(function (string $method, array $args): mixed {
             $this->calls[] = $method;
@@ -80,7 +89,7 @@ final class GroupCallMembershipTest extends TestCase
         return $API;
     }
 
-    private function joinedCall(MTProto $API): GroupCallController
+    private function joinedCall(MTProto $API, ?int $peerId = null, bool $liveStory = false): GroupCallController
     {
         $controller = new GroupCallController($API, [
             '_' => 'groupCall',
@@ -101,10 +110,10 @@ final class GroupCallMembershipTest extends TestCase
             'record_video_active' => false,
             'conference' => false,
             'version' => 1,
-        ]);
+        ], $peerId, $liveStory);
         (new ReflectionProperty($controller, 'callState'))->setValue($controller, GroupCallState::JOINED);
         (new ReflectionProperty($controller, 'source'))->setValue($controller, self::SOURCE);
-        (new ReflectionProperty($API, 'groupCalls'))->setValue($API, [1 => $controller]);
+        (new ReflectionProperty(MTProto::class, 'groupCalls'))->setValue($API, [1 => $controller]);
         return $controller;
     }
 
@@ -139,6 +148,78 @@ final class GroupCallMembershipTest extends TestCase
         $this->assertSame(['phone.checkGroupCall'], $this->calls);
         $this->assertSame(GroupCallState::LEFT, $controller->getCallState());
         $this->assertSame([], $API->getAllGroupCalls());
+    }
+
+    /**
+     * In stream mode, the stream is received even without a recording, to keep us in the call (the server drops a
+     * listener that downloads nothing), and recorded once a recording is set.
+     */
+    public function testTheStreamIsReceivedWithOrWithoutARecording(): void
+    {
+        $controller = $this->joinedCall($this->client());
+        $receiver = new ReflectionProperty(GroupCallController::class, 'streamReceiver');
+        (fn () => $this->applyConnectionParams(['stream' => true, 'rtmp' => true]))->call($controller);
+        $this->assertNotNull($receiver->getValue($controller), 'Received without a recording');
+        $this->assertTrue((new ReflectionProperty(StreamReceiver::class, 'running'))->getValue($receiver->getValue($controller)));
+
+        $controller->setOutput(new LocalFile(sys_get_temp_dir().'/madeline-stream-on-demand.mkv'));
+        $this->assertTrue((new ReflectionProperty(StreamReceiver::class, 'running'))->getValue($receiver->getValue($controller)), 'Recorded');
+        $receiver->getValue($controller)->stop();
+    }
+
+    /**
+     * A call that ended is reported to the event handler as discarded: a live story ends with an updateStory, without
+     * the groupCallDiscarded the event handler waits for (magnaluna didn't start its live story again).
+     */
+    public function testAnEndedCallIsReportedAsDiscarded(): void
+    {
+        $API = $this->client();
+        $controller = $this->joinedCall($API, 783732906, liveStory: true);
+        $this->answer = static fn () => throw RPCErrorException::make('GROUPCALL_INVALID', 400, '');
+
+        self::check($controller);
+
+        $this->assertSame([[
+            '_' => 'updateGroupCall',
+            'call' => ['_' => 'groupCallDiscarded', 'id' => 1, 'access_hash' => 1234, 'duration' => 0],
+            'live_story' => true,
+            'peer' => ['_' => 'peerUser', 'user_id' => 783732906],
+        ]], $this->updates);
+    }
+
+    /**
+     * A call we may just not be in anymore didn't end: it isn't reported as discarded.
+     */
+    public function testAForbiddenCallIsNotReportedAsDiscarded(): void
+    {
+        $controller = $this->joinedCall($this->client(), -1001412768105);
+        $this->answer = static fn () => throw RPCErrorException::make('GROUPCALL_FORBIDDEN', 403, '');
+
+        self::check($controller);
+
+        $this->assertSame(GroupCallState::LEFT, $controller->getCallState());
+        $this->assertSame([], $this->updates);
+    }
+
+    /**
+     * A failed WebRTC connection is rejoined right away, even if the server still lists our source: it never
+     * recovers by itself (after a network outage, every call of a bot stayed failed for hours, sending nothing).
+     * An ended call is left, as with any rejoin.
+     */
+    public function testAFailedConnectionIsRejoined(): void
+    {
+        $API = $this->client();
+        $controller = $this->joinedCall($API);
+        $this->answer = static fn (string $method) => match ($method) {
+            'phone.checkGroupCall' => [self::SOURCE],
+            'phone.joinGroupCall' => throw RPCErrorException::make('GROUPCALL_INVALID', 400, ''),
+        };
+
+        $controller->onConnectionFailed();
+        delay(0.1);
+
+        $this->assertSame(['phone.joinGroupCall'], $this->calls);
+        $this->assertSame(GroupCallState::LEFT, $controller->getCallState());
     }
 
     public function testACallWeAreStillInIsKept(): void

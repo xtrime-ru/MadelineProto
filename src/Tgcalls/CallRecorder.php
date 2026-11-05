@@ -324,8 +324,11 @@ final class CallRecorder
      * @param int    $source       Identifies the track the frame belongs to; a new source is placed on
      *                             the recording's clock where it currently is.
      * @param int    $slot         Whether this is the camera ({@see CallStream::VIDEO}) or the screen share ({@see CallStream::SCREEN}).
+     * @param ?string $codecId     The Matroska codec ID of the frame, if known (from the payload type it arrived with,
+     *                             see {@see self::codecIdOf()}): a sender can switch codec on the same source, which
+     *                             is then described afresh, like a new source. Sniffed from the bitstream otherwise.
      */
-    public function pushVideoFrame(string $data, int $rtpTimestamp, int $source = 0, int $slot = CallStream::VIDEO): void
+    public function pushVideoFrame(string $data, int $rtpTimestamp, int $source = 0, int $slot = CallStream::VIDEO, ?string $codecId = null): void
     {
         if ($this->closed || $data === '') {
             return;
@@ -334,10 +337,11 @@ final class CallRecorder
         if ($this->expected[$slot] === false || !$this->wanted($slot)) {
             return; // Signaling says this stream is off (a straggler), or it is not recorded.
         }
-        $newSource = ($this->sources[$slot] ?? null) !== $source;
+        $newSource = ($this->sources[$slot] ?? null) !== $source
+            || ($codecId !== null && isset($this->described[$slot]) && $this->described[$slot]['codecId'] !== $codecId);
         $ms = $this->placeOnClock($slot, $source, $rtpTimestamp, 90000);
 
-        [$out, $keyframe] = self::transformVideo($data, $newSource ? null : ($this->described[$slot]['codecId'] ?? null));
+        [$out, $keyframe] = self::transformVideo($data, $codecId ?? ($newSource ? null : ($this->described[$slot]['codecId'] ?? null)));
         if ($out === '') {
             return;
         }
@@ -791,6 +795,24 @@ final class CallRecorder
     }
 
     /**
+     * The Matroska codec ID of a received frame's codec, from the MIME type of its payload type
+     * ({@see \Webrtc\Codecs\EncodedPacket::getMimeType()}), if it is a video codec we record.
+     *
+     * @psalm-pure
+     */
+    public static function codecIdOf(?string $mimeType): ?string
+    {
+        return match ($mimeType === null ? null : strtolower($mimeType)) {
+            'video/vp8' => 'V_VP8',
+            'video/vp9' => 'V_VP9',
+            'video/av1' => 'V_AV1',
+            'video/h264' => 'V_MPEG4/ISO/AVC',
+            'video/h265' => 'V_MPEGH/ISO/HEVC',
+            default => null,
+        };
+    }
+
+    /**
      * Prepare a frame for muxing and report whether it is a keyframe.
      *
      * @param ?string $codecId The Matroska codec of the track, when already known.
@@ -849,24 +871,19 @@ final class CallRecorder
     {
         $nals = [];
         $len = \strlen($frame);
-        $i = 0;
         $start = -1;
-        while ($i < $len) {
-            // Find a start code.
-            if ($i + 3 <= $len && $frame[$i] === "\x00" && $frame[$i + 1] === "\x00" && $frame[$i + 2] === "\x01") {
-                if ($start >= 0) {
-                    $end = $i;
-                    // Trim a trailing zero belonging to the next 4-byte start code.
-                    if ($end > $start && $frame[$end - 1] === "\x00") {
-                        $end--;
-                    }
-                    $nals[] = substr($frame, $start, $end - $start);
+        // Every frame the RTMP publisher sends goes through here: search the start codes with strpos, comparing
+        // byte by byte in PHP took a tenth of magnaluna's CPU.
+        for ($i = strpos($frame, "\x00\x00\x01"); $i !== false; $i = strpos($frame, "\x00\x00\x01", $start)) {
+            if ($start >= 0) {
+                $end = $i;
+                // Trim a trailing zero belonging to the next 4-byte start code.
+                if ($end > $start && $frame[$end - 1] === "\x00") {
+                    $end--;
                 }
-                $i += 3;
-                $start = $i;
-                continue;
+                $nals[] = substr($frame, $start, $end - $start);
             }
-            $i++;
+            $start = $i + 3;
         }
         if ($start >= 0 && $start < $len) {
             $nals[] = substr($frame, $start);

@@ -21,8 +21,10 @@ declare(strict_types=1);
 namespace danog\MadelineProto\Stream\MTProtoTransport;
 
 use Amp\Cancellation;
+
 use Amp\Socket\Socket;
 use danog\MadelineProto\Exception;
+use danog\MadelineProto\MTProtoTools\Crypt;
 use danog\MadelineProto\Stream\BufferedProxyStreamInterface;
 use danog\MadelineProto\Stream\BufferedStreamInterface;
 use danog\MadelineProto\Stream\BufferInterface;
@@ -103,7 +105,7 @@ final class FakeTlsStream implements BufferedProxyStreamInterface, BufferInterfa
      *
      * @internal
      */
-    public static function generateClientHello(string $domain, string $key, int $time): string
+    public static function generateClientHello(string $domain, #[\SensitiveParameter] string $key, int $time): string
     {
         $grease = array_map(static fn (int $c): int => ($c & 0xF0) + 0x0A, array_values(unpack('C*', Tools::random(7))));
         for ($i = 1; $i < 7; $i += 2) {
@@ -148,7 +150,7 @@ final class FakeTlsStream implements BufferedProxyStreamInterface, BufferInterfa
         $hello = substr_replace($hello, pack('n', \strlen($hello) - 5), 3, 2);
         $hello = substr_replace($hello, pack('n', \strlen($hello) - 9), 7, 2);
 
-        $random = hash_hmac('sha256', $hello, $key, true);
+        $random = Crypt::hmacSha256($hello, $key);
         $random = substr($random, 0, 28).pack('V', unpack('V', substr($random, 28))[1] ^ ($time & 0xFFFFFFFF));
         return substr_replace($hello, $random, 11, 32);
     }
@@ -159,14 +161,14 @@ final class FakeTlsStream implements BufferedProxyStreamInterface, BufferInterfa
      *
      * @internal
      */
-    public static function checkServerHello(string $key, string $clientRandom, string $response): bool
+    public static function checkServerHello(#[\SensitiveParameter] string $key, string $clientRandom, string $response): bool
     {
         if (\strlen($response) < 11 + 32) {
             return false;
         }
         $serverRandom = substr($response, 11, 32);
         $response = substr_replace($response, str_repeat("\0", 32), 11, 32);
-        return hash_equals(hash_hmac('sha256', $clientRandom.$response, $key, true), $serverRandom);
+        return hash_equals(Crypt::hmacSha256($clientRandom.$response, $key), $serverRandom);
     }
 
     private static function scope(string $data): string
