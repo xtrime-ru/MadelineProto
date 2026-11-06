@@ -111,6 +111,8 @@ final class Connection
      * Whether we're currently writing an MTProto packet.
      */
     private bool $writing = false;
+    /** Monotonic time when this media/CDN socket was first observed idle. */
+    private ?float $idleSince = null;
     /**
      * Main instance.
      *
@@ -172,6 +174,9 @@ final class Connection
     public function writing(bool $writing): void
     {
         $this->writing = $writing;
+        if ($writing) {
+            $this->idleSince = null;
+        }
     }
     /**
      * Whether we're currently writing an MTProto packet.
@@ -309,6 +314,7 @@ final class Connection
                         }
                         throw new CouldNotConnectException("The connection to DC {$this->datacenterId} was closed while connecting");
                     }
+                    $this->idleSince = null;
                     $this->stream = $stream;
                     $this->API->logger("Connected to DC {$this->datacenterId} via $ctx!", Logger::WARNING);
                     $this->chosenCtx = $ctx;
@@ -632,6 +638,7 @@ final class Connection
             $this->handOver($message);
             return;
         }
+        $this->idleSince = null;
         $message->connection = $this;
         $message->moveFileRoom($this);
         $message->trySend();
@@ -732,6 +739,31 @@ final class Connection
     {
         return $this->shared;
     }
+    /**
+     * Close an unused media/CDN socket, keeping its session available for the next request.
+     * Checked by the cleanup loop every ten seconds. Active requests and writes reset the idle period.
+     */
+    public function closeIfIdle(): void
+    {
+        if (!$this->stream || $this->closed || $this->needsReconnect
+            || (!$this->shared->auth->isMedia && !$this->shared->auth->isCdn)
+            || $this->fileRequests || $this->isWriting()
+            || $this->new_outgoing || $this->unencrypted_new_outgoing
+            || ($this->mainPendingOutgoing ?? null)?->peek()
+            || ($this->unencryptedPendingOutgoing ?? null)?->peek()
+            || ($this->uninitedPendingOutgoing ?? null)?->peek()
+        ) {
+            $this->idleSince = null;
+            return;
+        }
+        $now = hrtime(true) / 1e9;
+        $this->idleSince ??= $now;
+        if ($now - $this->idleSince >= $this->shared->getSettings()->getIdleTimeout()) {
+            $this->idleSince = null;
+            $this->disconnect(true);
+        }
+    }
+
     /**
      * Disconnect from DC.
      *

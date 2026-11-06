@@ -99,6 +99,8 @@ final class Connection extends SettingsAbstract
      * Connection timeout.
      */
     protected float $timeout = 5.0;
+    /** @var positive-int Media and CDN connection idle timeout, in seconds. */
+    protected int $idleTimeout = 60;
     /**
      * Ping interval.
      */
@@ -525,6 +527,25 @@ final class Connection extends SettingsAbstract
     {
         $this->timeout = $timeout;
 
+        return $this;
+    }
+
+    /** @return positive-int Media and CDN connection idle timeout, in seconds. */
+    public function getIdleTimeout(): int
+    {
+        return $this->idleTimeout;
+    }
+
+    /**
+     * @param positive-int $idleTimeout Media and CDN connection idle timeout, in seconds.
+     * @psalm-external-mutation-free
+     */
+    public function setIdleTimeout(int $idleTimeout): self
+    {
+        if ($idleTimeout <= 0) {
+            throw new \ValueError('Idle timeout must be positive');
+        }
+        $this->idleTimeout = $idleTimeout;
         return $this;
     }
 
