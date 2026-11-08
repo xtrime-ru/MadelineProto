@@ -22,7 +22,6 @@ namespace danog\MadelineProto\Loop\Connection;
 
 use danog\Loop\Loop;
 use danog\MadelineProto\Connection;
-use Revolt\EventLoop;
 
 /**
  * Message cleanup loop.
@@ -50,8 +49,6 @@ final class CleanupLoop extends Loop
     protected function loop(): ?float
     {
         $this->connection->msgIdHandler?->cleanup();
-        // Disconnect outside this loop: disconnect() stops the cleanup loop too.
-        EventLoop::queue($this->connection->closeIfIdle(...));
         return 10.0;
     }
     /**
