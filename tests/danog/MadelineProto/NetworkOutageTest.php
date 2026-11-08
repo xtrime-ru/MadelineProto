@@ -221,6 +221,7 @@ final class NetworkOutageTest extends TestCase
         $resume->complete();
         try {
             $next->getSendPromise()->await(new TimeoutCancellation(5));
+            $this->assertTrue($next->wasSent());
             $this->assertTrue($cancelled->hasReply());
             $this->assertFalse($cancelled->hasSerializedBody());
             $this->assertTrue($connection->unencryptedPendingOutgoing->isEmpty());

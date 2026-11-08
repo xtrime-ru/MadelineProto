@@ -23,11 +23,11 @@ use Amp\Cancellation;
 use Amp\DeferredFuture;
 use Amp\Http\Server\Driver\Client;
 use Amp\Http\Server\Request;
+use Amp\TimeoutCancellation;
 use danog\MadelineProto\MTProtoTools\FilesLogic;
 use danog\MadelineProto\ResumableStream;
 use danog\MadelineProto\Settings;
 use Generator;
-use IteratorAggregate;
 use League\Uri\Http;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -46,7 +46,7 @@ final class DownloadToResponseTest extends TestCase
     {
         $source = new ReadableIterableStream($chunks);
         $stream = $this->createMock(ResponseDownloadStream::class);
-        foreach (['read', 'close', 'isClosed', 'getIterator'] as $method) {
+        foreach (['read', 'close', 'isClosed'] as $method) {
             $stream->method($method)->willReturnCallback($source->$method(...));
         }
         return new class($stream) {
@@ -95,7 +95,7 @@ final class DownloadToResponseTest extends TestCase
             delay(0.001);
             $ready = true;
             yield 'abc';
-            $finish->getFuture()->await();
+            $finish->getFuture()->await(new TimeoutCancellation(5));
             yield 'def';
         })());
         $response = $downloader->downloadToResponse([], $this->request());
@@ -153,6 +153,6 @@ final class DownloadToResponseTest extends TestCase
 }
 
 /** @internal */
-interface ResponseDownloadStream extends ReadableStream, ResumableStream, IteratorAggregate
+interface ResponseDownloadStream extends ReadableStream, ResumableStream
 {
 }

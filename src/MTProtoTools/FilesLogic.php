@@ -304,10 +304,9 @@ trait FilesLogic
             }
             $body = new ReadableIterableStream((static function () use ($firstChunk, $stream): \Generator {
                 try {
-                    if ($firstChunk !== null) {
-                        yield $firstChunk;
+                    for ($chunk = $firstChunk; $chunk !== null; $chunk = $stream->read()) {
+                        yield $chunk;
                     }
-                    yield from $stream;
                 } catch (Throwable $e) {
                     // HTTP drivers handle StreamException by aborting this response instead of the event loop.
                     throw new StreamException('Download failed while streaming HTTP response', 0, $e);
